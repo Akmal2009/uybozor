@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { resetUserPassword } from '../services/authService';
-import { sendSmsOtpCode, verifySmsOtpCode } from '../services/smsService';
+import { sendTelegramOtpCode, verifyTelegramOtpCode, getTelegramBotOtpLink } from '../services/telegramService';
 import {
   X,
   Smartphone,
@@ -78,7 +78,7 @@ export const AuthModal: React.FC = () => {
     }
   };
 
-  // 2. Ro'yxatdan o'tish 1-bosqich: SMS kod yuborish
+  // 2. Ro'yxatdan o'tish 1-bosqich: Telegram bot orqali kod yuborish
   const handleRequestRegisterSms = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -98,29 +98,29 @@ export const AuthModal: React.FC = () => {
 
     setLoading(true);
     try {
-      await sendSmsOtpCode(phoneOrEmail, 'Ro\'yxatdan o\'tish');
+      await sendTelegramOtpCode(phoneOrEmail, 'Ro\'yxatdan o\'tish', name);
       setStep('sms_verify');
     } catch (err: any) {
-      setError('SMS yuborishda xatolik: ' + err.message);
+      setError('Tasdiqlash kodi yuborishda xatolik: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // 3. Ro'yxatdan o'tish 2-bosqich: SMS tasdiqlash va hisob ochish
+  // 3. Ro'yxatdan o'tish 2-bosqich: Telegram kodni tasdiqlash va hisob ochish
   const handleVerifyRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (!smsCode.trim()) {
-      setError('Telefoningizga SMS orqali kelgan 4 xonali kodni kiriting');
+      setError('Telegram bot orqali yuborilgan 4 xonali kodni kiriting');
       return;
     }
 
     // Yuborilgan to'g'ri kodni tekshirish
-    const isValidCode = verifySmsOtpCode(phoneOrEmail, smsCode);
+    const isValidCode = verifyTelegramOtpCode(phoneOrEmail, smsCode);
     if (!isValidCode) {
-      setError('❌ SMS tasdiqlash kodi noto\'g\'ri! Iltimos, to\'g\'ri kodni kiriting.');
+      setError('❌ Tasdiqlash kodi noto\'g\'ri! Iltimos, to\'g\'ri kodni kiriting.');
       return;
     }
 
@@ -135,7 +135,7 @@ export const AuthModal: React.FC = () => {
     }
   };
 
-  // 4. Parolni unutganda 1-bosqich: SMS kod so'rash
+  // 4. Parolni unutganda 1-bosqich: Telegram bot orqali kod so'rash
   const handleRequestForgotSms = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -147,22 +147,22 @@ export const AuthModal: React.FC = () => {
 
     setLoading(true);
     try {
-      await sendSmsOtpCode(phoneOrEmail, 'Parolni tiklash');
+      await sendTelegramOtpCode(phoneOrEmail, 'Parolni tiklash');
       setStep('sms_verify');
     } catch (err: any) {
-      setError('SMS yuborishda xatolik: ' + err.message);
+      setError('Tasdiqlash kodi yuborishda xatolik: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // 5. Parolni tiklash 2-bosqich: SMS tasdiqlash va yangi parol o'rnatish
+  // 5. Parolni tiklash 2-bosqich: Telegram kodni tasdiqlash va yangi parol o'rnatish
   const handleVerifyForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (!smsCode.trim()) {
-      setError('SMS orqali kelgan 4 xonali kodni kiriting');
+      setError('Telegram bot orqali yuborilgan 4 xonali kodni kiriting');
       return;
     }
     if (!newPassword || newPassword.length < 4) {
@@ -171,9 +171,9 @@ export const AuthModal: React.FC = () => {
     }
 
     // Yuborilgan to'g'ri kodni tekshirish
-    const isValidCode = verifySmsOtpCode(phoneOrEmail, smsCode);
+    const isValidCode = verifyTelegramOtpCode(phoneOrEmail, smsCode);
     if (!isValidCode) {
-      setError('❌ SMS tasdiqlash kodi noto\'g\'ri!');
+      setError('❌ Tasdiqlash kodi noto\'g\'ri!');
       return;
     }
 
@@ -216,7 +216,7 @@ export const AuthModal: React.FC = () => {
               ? 'Hisobga kirish'
               : mode === 'register'
               ? step === 'sms_verify'
-                ? 'SMS Tasdiqlash'
+                ? 'Telegram orqali tasdiqlash'
                 : 'Ro\'yxatdan o\'tish'
               : step === 'sms_verify'
               ? 'Yangi Parol O\'rnatish'
@@ -227,7 +227,7 @@ export const AuthModal: React.FC = () => {
               ? 'Telefon raqam (login) va parolingizni kiriting'
               : mode === 'register'
               ? step === 'sms_verify'
-                ? `${phoneOrEmail} raqamiga yuborilgan kodni kiriting`
+                ? 'Telegram botga yuborilgan 4 xonali kodni kiriting'
                 : 'Yangi profil yaratish uchun ma\'lumotlaringizni kiriting'
               : step === 'sms_verify'
               ? 'Kodni kiriting va yangi parolingizni o\'rnating'
@@ -399,26 +399,34 @@ export const AuthModal: React.FC = () => {
               className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 mt-2"
             >
               <Send className="w-4 h-4" />
-              <span>SMS kod olish</span>
+              <span>Tasdiqlash kodini olish</span>
             </button>
           </form>
         )}
 
         {/* ========================================================= */}
-        {/* 3. RO'YXATDAN O'TISH: SMS KOD KIRITISH */}
+        {/* 3. RO'YXATDAN O'TISH: KOD KIRITISH */}
         {/* ========================================================= */}
         {mode === 'register' && step === 'sms_verify' && (
-          <form onSubmit={handleVerifyRegister} className="space-y-5">
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1">
+          <form onSubmit={handleVerifyRegister} className="space-y-4">
+            <div className="p-4 bg-sky-50 border border-sky-200 rounded-2xl text-center space-y-2.5">
               <span className="font-bold text-gray-900 block text-sm">{phoneOrEmail}</span>
-              <p className="text-xs text-emerald-800">
-                Ushbu telefon raqamingizga 4 xonali SMS tasdiqlash kodi yuborildi.
+              <p className="text-xs text-sky-800 leading-relaxed">
+                Tasdiqlash kodi <b>@Uybozorinbot</b> Telegram botimizga yuborildi.
               </p>
+              <a
+                href={getTelegramBotOtpLink(phoneOrEmail)}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-2.5 px-3 bg-[#0088cc] hover:bg-[#0077b5] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+              >
+                <span>✈️ Telegram Botdan Kodni Olish (@Uybozorinbot)</span>
+              </a>
             </div>
 
             <div>
               <label htmlFor="auth-reg-smscode" className="block text-xs font-semibold text-gray-700 text-center mb-2">
-                SMS kodni kiriting
+                4 xonali tasdiqlash kodini kiriting
               </label>
               <input
                 id="auth-reg-smscode"
@@ -429,14 +437,14 @@ export const AuthModal: React.FC = () => {
                 value={smsCode}
                 onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="••••"
-                className="w-full text-center py-3 bg-gray-50 border border-gray-300 rounded-2xl text-3xl font-mono tracking-widest font-black focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-gray-900 shadow-inner"
+                className="w-full text-center py-3 bg-gray-50 border border-gray-300 rounded-2xl text-3xl font-mono tracking-widest font-black focus:outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white text-gray-900 shadow-inner"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold rounded-2xl text-sm shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-bold rounded-2xl text-sm shadow-lg shadow-brand-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>{loading ? 'Tasdiqlanmoqda...' : 'Tasdiqlash va Kirish'}</span>
@@ -481,7 +489,7 @@ export const AuthModal: React.FC = () => {
               className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 mt-2"
             >
               <Send className="w-4 h-4" />
-              <span>SMS kod yuborish</span>
+              <span>Tasdiqlash kodini olish</span>
             </button>
 
             <button
@@ -496,20 +504,28 @@ export const AuthModal: React.FC = () => {
         )}
 
         {/* ========================================================= */}
-        {/* 5. PAROLNI UNUTGANDA: SMS KOD VA YANGI PAROL */}
+        {/* 5. PAROLNI UNUTGANDA: KOD VA YANGI PAROL */}
         {/* ========================================================= */}
         {mode === 'forgot_password' && step === 'sms_verify' && (
           <form onSubmit={handleVerifyForgotPassword} className="space-y-4">
-            <div className="p-3 bg-brand-50 border border-brand-200 rounded-2xl text-center text-xs text-brand-900 space-y-1">
-              <span className="font-semibold block text-sm">{phoneOrEmail}</span>
-              <span className="text-[11px] text-brand-700">
-                Telefoningizga SMS orqali 4 xonali kod yuborildi.
-              </span>
+            <div className="p-4 bg-sky-50 border border-sky-200 rounded-2xl text-center space-y-2.5">
+              <span className="font-semibold block text-sm text-gray-900">{phoneOrEmail}</span>
+              <p className="text-xs text-sky-800 leading-relaxed">
+                Tasdiqlash kodi <b>@Uybozorinbot</b> Telegram botimizga yuborildi.
+              </p>
+              <a
+                href={getTelegramBotOtpLink(phoneOrEmail)}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-2.5 px-3 bg-[#0088cc] hover:bg-[#0077b5] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+              >
+                <span>✈️ Telegram Botdan Kodni Olish (@Uybozorinbot)</span>
+              </a>
             </div>
 
             <div>
               <label htmlFor="auth-forgot-smscode" className="block text-xs font-semibold text-gray-700 text-center mb-1.5">
-                SMS kodni kiriting
+                4 xonali kodni kiriting
               </label>
               <input
                 id="auth-forgot-smscode"
@@ -520,7 +536,7 @@ export const AuthModal: React.FC = () => {
                 value={smsCode}
                 onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="••••"
-                className="w-full text-center py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-2xl font-mono tracking-widest font-black focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white text-gray-900"
+                className="w-full text-center py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-2xl font-mono tracking-widest font-black focus:outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white text-gray-900"
               />
             </div>
 
@@ -545,7 +561,7 @@ export const AuthModal: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>{loading ? 'Yangilanmoqda...' : 'Parolni Yangilash va Kirish'}</span>

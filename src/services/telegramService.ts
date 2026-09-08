@@ -18,23 +18,37 @@ export const getTelegramBotLink = (): string => {
   return `https://t.me/${username.replace('@', '')}`;
 };
 
+// Telegram orqali botni ochish va telefon orqali ulash linki
+export const getTelegramBotOtpLink = (phone?: string): string => {
+  const username = TELEGRAM_CONFIG.BOT_USERNAME || 'Uybozorinbot';
+  const cleanPhone = phone ? phone.replace(/[^\d]/g, '') : '';
+  if (cleanPhone) {
+    return `https://t.me/${username.replace('@', '')}?start=${cleanPhone}`;
+  }
+  return `https://t.me/${username.replace('@', '')}`;
+};
+
 // Shaxsiy Haqiqiy Admin Chat ID ni olish (Faqat haqiqiy adminga yuboriladi)
 export const getActiveAdminChatId = (): string => {
   return TELEGRAM_CONFIG.ADMIN_CHAT_ID;
 };
 
 // Foydalanuvchining shaxsiy Telegram Chat ID sini olish (agar bot bilan bog'langan bo'lsa)
+// DIQQAT: Hech qachon Admin Chat ID sini qaytarmaydi! Foydalanuvchiga faqat o'z kodi boradi.
 export const getUserChatId = (phone: string): string => {
-  const cleanPhone = phone.replace(/\s+/g, '');
+  const cleanPhone = phone.replace(/[^\d]/g, '');
   const userChatId = typeof localStorage !== 'undefined' ? localStorage.getItem(`user_tg_chat_${cleanPhone}`) : null;
   if (userChatId && userChatId.trim() !== '') {
     return userChatId;
   }
   const latestUserChatId = typeof localStorage !== 'undefined' ? localStorage.getItem('user_latest_tg_chat_id') : null;
   if (latestUserChatId && latestUserChatId.trim() !== '') {
-    return latestUserChatId;
+    // Agar latestUserChatId adminga tegishli bo'lsa, uni oddiy foydalanuvchiga bermaymiz
+    if (latestUserChatId !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
+      return latestUserChatId;
+    }
   }
-  return getActiveAdminChatId();
+  return '';
 };
 
 export interface ListingNotificationData {
@@ -304,15 +318,20 @@ export const requestVipPermission = async (listingId: string): Promise<boolean> 
  */
 export const sendTelegramOtpCode = async (
   phone: string,
-  name?: string,
-  purpose: string = 'Ro\'yxatdan o\'tish'
+  purposeOrName?: string,
+  maybeName?: string
 ): Promise<{ success: boolean; code: string; error?: string }> => {
   const token = TELEGRAM_CONFIG.BOT_TOKEN;
-  const targetChatId = getUserChatId(phone);
+  const cleanPhone = phone.replace(/[^\d]/g, '');
+  const targetChatId = getUserChatId(cleanPhone);
+
+  const purpose = (purposeOrName && (purposeOrName.includes('o\'tish') || purposeOrName.includes('tiklash') || purposeOrName.includes('o\'zgartirish')))
+    ? purposeOrName
+    : (maybeName || 'Tasdiqlash');
+  const name = maybeName || (!purposeOrName?.includes(' ') ? purposeOrName : 'Foydalanuvchi');
 
   // 4 xonali tasodifiy maxfiy kod (masalan, 5821)
   const code = Math.floor(1000 + Math.random() * 9000).toString();
-  const cleanPhone = phone.replace(/\s+/g, '');
 
   // Kodni xotirada 5 daqiqaga saqlash
   const otpData = {
@@ -328,7 +347,9 @@ export const sendTelegramOtpCode = async (
     // fallback
   }
 
-  const messageText = `
+  // Faqat chat ID mavjud bo'lsa bot orqali xabar yuboramiz
+  if (targetChatId && targetChatId.trim() !== '') {
+    const messageText = `
 🔐 <b>"Arzon Uy" Tasdiqlash Kodi</b>
 
 👤 <b>Foydalanuvchi:</b> ${name || 'Foydalanuvchi'}
@@ -340,22 +361,22 @@ export const sendTelegramOtpCode = async (
 ⏳ <i>Ushbu 4 xonali kod 5 daqiqa davomida amal qiladi. Saytga aynan shu kodni kiriting.</i>
 `.trim();
 
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: targetChatId,
-        text: messageText,
-        parse_mode: 'HTML'
-      })
-    });
-
-    const result = await response.json();
-    return { success: true, code };
-  } catch (err: any) {
-    return { success: true, code };
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetChatId,
+          text: messageText,
+          parse_mode: 'HTML'
+        })
+      });
+    } catch (err: any) {
+      // ignore
+    }
   }
+
+  return { success: true, code };
 };
 
 /**
@@ -429,7 +450,7 @@ export const startTelegramBotPolling = () => {
             // Foydalanuvchi botga xabar yozganda
             if (update.message && update.message.chat) {
               const userChatId = update.message.chat.id.toString();
-              const text = update.message.text || '';
+              const text = (update.message.text || '').trim();
               const userName = update.message.from?.first_name || 'Foydalanuvchi';
               const isAdminUser = userChatId === TELEGRAM_CONFIG.ADMIN_CHAT_ID;
 
@@ -439,6 +460,13 @@ export const startTelegramBotPolling = () => {
               }
 
               if (text.startsWith('/start')) {
+                // Link orqali kelganda telefon parametri bo'lishi mumkin: masalan /start 998901234567
+                const parts = text.split(/\s+/);
+                const payloadPhone = parts.length > 1 ? parts[1].replace(/[^\d]/g, '') : '';
+                if (payloadPhone && !isAdminUser) {
+                  localStorage.setItem(`user_tg_chat_${payloadPhone}`, userChatId);
+                }
+
                 if (isAdminUser) {
                   try {
                     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -446,7 +474,7 @@ export const startTelegramBotPolling = () => {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         chat_id: userChatId,
-                        text: `👨‍💼 <b>Assalomu alaykum, Bosh Administrator (${userName})!</b>\n\n✅ Sayt boshqaruvi, yangi e'lonlar, VIP so'rovlari va 2FA login tasdiqlashlari FAQAT sizning ushbu Telegramingizga yuboriladi.`,
+                        text: `👨‍💼 <b>Assalomu alaykum, Bosh Administrator (${userName})!</b>\n\n✅ Sayt boshqaruvi, yangi e'lonlar, VIP so'rovlari va 2FA login tasdiqlashlari FAQAT sizning ushbu Telegramingizga yuboriladi. Boshqa foydalanuvchilarga bu ma'lumotlar bormaydi.`,
                         parse_mode: 'HTML'
                       })
                     });
@@ -454,16 +482,36 @@ export const startTelegramBotPolling = () => {
                     console.error('Admin /start xatosi:', e);
                   }
                 } else {
-                  // Oddiy foydalanuvchi uchun OTP yoki xush kelibsiz xabari
-                  const latestOtpRaw = localStorage.getItem('uybozor_latest_otp');
-                  let otpMessage = '';
-                  if (latestOtpRaw) {
-                    try {
-                      const otpParsed = JSON.parse(latestOtpRaw);
-                      if (Date.now() <= otpParsed.expiresAt) {
-                        otpMessage = `\n\n🔐 <b>Sizning tasdiqlash kodingiz:</b> <code>${otpParsed.code}</code>\n\n<i>Ushbu 4 xonali kodni saytdagi oynaga kiriting.</i>`;
-                      }
-                    } catch {}
+                  // Oddiy foydalanuvchi uchun OTP kodini qidirish
+                  let otpCode = '';
+                  if (payloadPhone) {
+                    const phoneOtpRaw = localStorage.getItem(`uybozor_otp_${payloadPhone}`);
+                    if (phoneOtpRaw) {
+                      try {
+                        const parsed = JSON.parse(phoneOtpRaw);
+                        if (Date.now() <= parsed.expiresAt) {
+                          otpCode = parsed.code;
+                        }
+                      } catch {}
+                    }
+                  }
+                  if (!otpCode) {
+                    const latestOtpRaw = localStorage.getItem('uybozor_latest_otp');
+                    if (latestOtpRaw) {
+                      try {
+                        const parsed = JSON.parse(latestOtpRaw);
+                        if (Date.now() <= parsed.expiresAt) {
+                          otpCode = parsed.code;
+                        }
+                      } catch {}
+                    }
+                  }
+
+                  let userMsg = `👋 <b>Assalomu alaykum, ${userName}!</b>\n\n"Arzon Uy" rasmiy botiga xush kelibsiz!`;
+                  if (otpCode) {
+                    userMsg += `\n\n🔐 <b>Sizning tasdiqlash kodingiz:</b> <code>${otpCode}</code>\n\n⏳ <i>Ushbu 4 xonali kodni saytdagi oynaga kiriting. Amal qilish muddati: 5 daqiqa.</i>`;
+                  } else {
+                    userMsg += `\n\nSaytda ro'yxatdan o'tayotganda yoki parolni tiklashda 4 xonali tasdiqlash kodi shu yerga yuboriladi.`;
                   }
 
                   try {
@@ -472,7 +520,7 @@ export const startTelegramBotPolling = () => {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         chat_id: userChatId,
-                        text: `👋 <b>Assalomu alaykum, ${userName}!</b>\n\n"Arzon Uy" tizimiga xush kelibsiz!${otpMessage || '\n\nSaytda ro\'yxatdan o\'tayotganda tasdiqlash kodlari shu yerga yuboriladi.'}`,
+                        text: userMsg,
                         parse_mode: 'HTML'
                       })
                     });
@@ -480,6 +528,37 @@ export const startTelegramBotPolling = () => {
                     console.error('/start javob xatosi:', e);
                   }
                 }
+              } else if (!isAdminUser) {
+                // Oddiy foydalanuvchi boshqa ixtiyoriy xabar yozsa (masalan "kod")
+                const latestOtpRaw = localStorage.getItem('uybozor_latest_otp');
+                let otpCode = '';
+                if (latestOtpRaw) {
+                  try {
+                    const parsed = JSON.parse(latestOtpRaw);
+                    if (Date.now() <= parsed.expiresAt) {
+                      otpCode = parsed.code;
+                    }
+                  } catch {}
+                }
+
+                let replyMsg = `👋 <b>Assalomu alaykum, ${userName}!</b>`;
+                if (otpCode) {
+                  replyMsg += `\n\n🔐 <b>Sizning tasdiqlash kodingiz:</b> <code>${otpCode}</code>\n\n⏳ <i>Ushbu 4 xonali kodni saytga kiriting.</i>`;
+                } else {
+                  replyMsg += `\n\n"Arzon Uy" tizimiga xush kelibsiz! Saytda tasdiqlash so'ralganda kodingiz shu yerga yuboriladi.`;
+                }
+
+                try {
+                  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      chat_id: userChatId,
+                      text: replyMsg,
+                      parse_mode: 'HTML'
+                    })
+                  });
+                } catch (e) {}
               }
             }
 

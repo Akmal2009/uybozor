@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { updateUserProfile } from '../services/authService';
-import { sendSmsOtpCode, verifySmsOtpCode } from '../services/smsService';
+import { sendTelegramOtpCode, verifyTelegramOtpCode, getTelegramBotOtpLink } from '../services/telegramService';
 import {
   X,
   User as UserIcon,
@@ -28,7 +28,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
   const [password, setPassword] = useState(user?.parol || '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || '');
 
-  // SMS bosqichi: 'form' | 'sms_verify'
+  // Tasdiqlash bosqichi: 'form' | 'sms_verify'
   const [step, setStep] = useState<'form' | 'sms_verify'>('form');
   const [smsCode, setSmsCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -43,17 +43,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
     setError('');
     setMessage('');
 
-    // Agar telefon yoki parol o'zgartirilgan bo'lsa -> SMS kod bosqichiga o'tadi
+    // Agar telefon yoki parol o'zgartirilgan bo'lsa -> Telegram kod bosqichiga o'tadi
     const isPhoneChanged = phone.trim() !== user.telefon.trim();
     const isPasswordChanged = password.trim() !== (user.parol || '').trim() && password.trim() !== '';
 
     if (isPhoneChanged || isPasswordChanged) {
       setLoading(true);
       try {
-        await sendSmsOtpCode(phone, 'Profil ma\'lumotlarini o\'zgartirish');
+        await sendTelegramOtpCode(phone, 'Profil ma\'lumotlarini o\'zgartirish', name);
         setStep('sms_verify');
       } catch (err: any) {
-        setError('SMS yuborishda xatolik: ' + err.message);
+        setError('Tasdiqlash kodi yuborishda xatolik: ' + err.message);
       } finally {
         setLoading(false);
       }
@@ -79,18 +79,18 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
     }
   };
 
-  // SMS kodni kiritib tasdiqlash
+  // Telegram bot kodni kiritib tasdiqlash
   const handleVerifySmsAndSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (!smsCode.trim()) {
-      setError('SMS orqali yuborilgan 4 xonali tasdiqlash kodini kiriting');
+      setError('Telegram bot orqali yuborilgan 4 xonali tasdiqlash kodini kiriting');
       return;
     }
 
     // Yuborilgan to'g'ri kodni tekshirish
-    const isValidCode = verifySmsOtpCode(phone, smsCode);
+    const isValidCode = verifyTelegramOtpCode(phone, smsCode);
     if (!isValidCode) {
       setError('❌ Tasdiqlash kodi noto\'g\'ri! Iltimos, to\'g\'ri 4 xonali kodni kiriting.');
       return;
@@ -207,7 +207,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 />
               </div>
               <span className="text-[10px] text-gray-400 mt-0.5 block">
-                Raqamni o'zgartirish uchun SMS kod so'raladi
+                Raqamni o'zgartirish uchun Telegram bot orqali tasdiqlash kodi so'raladi
               </span>
             </div>
 
@@ -225,7 +225,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 />
               </div>
               <span className="text-[10px] text-gray-400 mt-0.5 block">
-                Parolni o'zgartirish uchun SMS kod so'raladi
+                Parolni o'zgartirish uchun Telegram bot orqali tasdiqlash kodi so'raladi
               </span>
             </div>
 
@@ -238,20 +238,28 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
             </button>
           </form>
         ) : (
-          /* SMS TASDIQLASH BOSQICHI */
+          /* TELEGRAM TASDIQLASH BOSQICHI */
           <form onSubmit={handleVerifySmsAndSave} className="space-y-4">
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1">
+            <div className="p-4 bg-sky-50 border border-sky-200 rounded-2xl text-center space-y-2.5">
               <div className="text-xs font-bold text-gray-900">
-                Xavfsizlik tasdig'i
+                Xavfsizlik tasdig'i ({phone})
               </div>
-              <p className="text-xs text-emerald-800">
-                {phone} raqamingizga 4 xonali SMS tasdiqlash kodi yuborildi.
+              <p className="text-xs text-sky-800 leading-relaxed">
+                Tasdiqlash kodi <b>@Uybozorinbot</b> Telegram botimizga yuborildi.
               </p>
+              <a
+                href={getTelegramBotOtpLink(phone)}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-2.5 px-3 bg-[#0088cc] hover:bg-[#0077b5] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+              >
+                <span>✈️ Telegram Botdan Kodni Olish (@Uybozorinbot)</span>
+              </a>
             </div>
 
             <div>
               <label htmlFor="profile-sms-code-input" className="block text-xs font-semibold text-gray-700 text-center mb-1.5">
-                SMS kodni kiriting
+                4 xonali tasdiqlash kodini kiriting
               </label>
               <input
                 id="profile-sms-code-input"
@@ -262,14 +270,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 value={smsCode}
                 onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="••••"
-                className="w-full text-center py-3 bg-gray-50 border border-gray-300 rounded-2xl text-3xl font-mono tracking-widest font-black focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-gray-900 shadow-inner"
+                className="w-full text-center py-3 bg-gray-50 border border-gray-300 rounded-2xl text-3xl font-mono tracking-widest font-black focus:outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white text-gray-900 shadow-inner"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-2xl text-sm shadow-lg shadow-brand-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>{loading ? 'Tasdiqlanmoqda...' : 'Tasdiqlash va Saqlash'}</span>
