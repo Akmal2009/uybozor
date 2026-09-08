@@ -4,8 +4,11 @@ import { AuthProvider } from './context/AuthContext';
 import { FavoritesProvider } from './context/FavoritesContext';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
-import { AuthModal } from './components/AuthModal';
-import { SupportWidget } from './components/SupportWidget';
+import { Analytics } from '@vercel/analytics/react';
+
+// Modallar va qo'shimcha vidjetlarni lazy yuklash
+const AuthModal = lazy(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
+const SupportWidget = lazy(() => import('./components/SupportWidget').then(m => ({ default: m.SupportWidget })));
 
 // Tezkor ochilish uchun Code-Splitting (Lazy Loading)
 const HomePage = lazy(() => import('./pages/HomePage').then(m => ({ default: m.HomePage })));
@@ -48,8 +51,10 @@ const UserAppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         {children}
       </div>
       <Footer />
-      <AuthModal />
-      <SupportWidget />
+      <Suspense fallback={null}>
+        <AuthModal />
+        <SupportWidget />
+      </Suspense>
     </div>
   );
 };
@@ -91,6 +96,7 @@ export const App: React.FC = () => {
               </Routes>
             </Suspense>
           </UserAppLayout>
+          <Analytics />
         </FavoritesProvider>
       </AuthProvider>
     </Router>

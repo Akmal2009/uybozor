@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Listing } from '../types';
 import { Heart, MapPin, Bed, Layers, Maximize2, Phone, Sparkles, Eye } from 'lucide-react';
 import { useFavorites } from '../context/FavoritesContext';
+import { getOptimizedImageUrl } from '../services/imageUtils';
 
 interface ListingCardProps {
   listing: Listing;
@@ -17,13 +18,18 @@ export const ListingCard: React.FC<ListingCardProps> = ({ listing, priority = fa
     ? `$${listing.narx.toLocaleString()}` 
     : `${listing.narx.toLocaleString()} UZS`;
 
+  const cardImage = getOptimizedImageUrl(
+    listing.rasmlar[0] || 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=800&q=80',
+    480
+  );
+
   return (
     <div className="group relative bg-white rounded-2xl overflow-hidden border border-gray-100 hover:border-brand-300 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col">
       {/* Rasm qismi — CLS oldini olish uchun qat'iy aspect-[16/9] va bg-gray-200 */}
       <div className="relative aspect-[16/9] w-full overflow-hidden bg-gray-200">
         <Link to={`/listing/${listing.id}`} aria-label={`${listing.shahar}, ${listing.manzil_matn} e'lonini ko'rish`}>
           <img
-            src={listing.rasmlar[0] || 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=800&q=80'}
+            src={cardImage}
             alt={listing.manzil_matn}
             width={400}
             height={225}

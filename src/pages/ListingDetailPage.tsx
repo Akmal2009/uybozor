@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Listing } from '../types';
 import { fetchListingById, fetchListings, incrementViewCount, updateListing } from '../services/listingService';
 import { requestVipPermission } from '../services/telegramService';
+import { getOptimizedImageUrl } from '../services/imageUtils';
 import { useFavorites } from '../context/FavoritesContext';
 import { useAuth } from '../context/AuthContext';
 import { ListingCard } from '../components/ListingCard';
@@ -298,7 +299,7 @@ export const ListingDetailPage: React.FC = () => {
         {/* Asosiy katta rasm */}
         <div className="relative aspect-[16/9] md:aspect-[21/9] w-full rounded-3xl overflow-hidden bg-gray-900 shadow-md">
           <img
-            src={selectedImage || listing.rasmlar[0]}
+            src={getOptimizedImageUrl(selectedImage || listing.rasmlar[0], 1200)}
             alt={listing.manzil_matn}
             width={1200}
             height={675}
@@ -325,7 +326,7 @@ export const ListingDetailPage: React.FC = () => {
                 }`}
               >
                 <img
-                  src={img}
+                  src={getOptimizedImageUrl(img, 200)}
                   alt={`Ko'chmas mulk rasmi ${idx + 1}`}
                   width={112}
                   height={80}
