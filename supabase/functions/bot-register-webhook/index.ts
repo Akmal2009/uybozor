@@ -5,7 +5,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_USER_BOT_TOKEN") || "";
-const SITE_URL = Deno.env.get("SITE_URL") || "https://uy-bozor.uz";
+const SITE_URL = Deno.env.get("SITE_URL") || "https://www.uybozor.store/";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY =
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||

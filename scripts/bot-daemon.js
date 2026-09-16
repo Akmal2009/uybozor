@@ -47,7 +47,7 @@ const ADMIN_BOT_TOKEN = process.env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || process.env
 const ADMIN_CHAT_ID = process.env.VITE_ADMIN_CHAT_ID || process.env.ADMIN_CHAT_ID || '';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const SITE_URL = process.env.SITE_URL || 'https://uy-bozor.uz';
+const SITE_URL = process.env.SITE_URL || 'https://www.uybozor.store/';
 
 console.log('====================================================');
 console.log('       UY BOZOR TELEGRAM BOT SERVER DAEMON          ');

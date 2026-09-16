@@ -33,7 +33,7 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 # 4. Sayt domeni
-SITE_URL=https://uy-bozor.uz
+SITE_URL=https://www.uybozor.store/
 ```
 
 ---
