@@ -7,8 +7,7 @@ import { MapPicker } from '../components/MapPicker';
 import { ListingType, Currency } from '../types';
 import {
   TELEGRAM_CONFIG,
-  sendTelegramNotification,
-  startTelegramBotPolling
+  sendTelegramNotification
 } from '../services/telegramService';
 import {
   Upload,
@@ -35,10 +34,10 @@ export const CONFIG = {
   ADMIN_CHAT_ID: TELEGRAM_CONFIG.ADMIN_CHAT_ID,
 
   // 3. Supabase URL manzili
-  SUPABASE_URL: 'https://vueidtzvefxkaxdfsiad.supabase.co',
+  SUPABASE_URL: (import.meta as any).env?.VITE_SUPABASE_URL || '',
 
   // 4. Supabase Anon ochiq kaliti
-  SUPABASE_ANON_KEY: 'sb_publishable_X-uV8iJElbjAqsmyrUq7ww_60wy08bc'
+  SUPABASE_ANON_KEY: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || ''
 };
 
 const CITIES = [
@@ -166,10 +165,7 @@ export const CreateListingPage: React.FC = () => {
     }
   };
 
-  // Telegram bot polling'ni ishga tushirish
-  useEffect(() => {
-    startTelegramBotPolling();
-  }, []);
+
 
   // Edit rejimini tekshirish
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { Listing, User, Payment, LoginRequest } from '../types';
 import { getSupabase } from './supabase';
 import { getStoredListings, saveStoredListings, deleteListing, updateListing } from './listingService';
-import { getStoredUsers } from './authService';
+import { getStoredUsers, hashPassword } from './authService';
 import { getStoredPayments } from './paymentService';
 
 const LOGIN_REQUESTS_KEY = 'uybozor_login_requests';
@@ -114,6 +114,75 @@ export const updateLoginRequestStatus = async (
   return true;
 };
 
+/**
+ * 3.1. Admin hisob ma'lumotlarini xavfsiz tekshirish (100% Server-side RPC / Edge Function)
+ * DIQQAT: Frontend bundle ichida hech qanday maxfiy kalit yoki xesh saqlanmaydi!
+ * Tekshiruv faqat Supabase Edge Function yoki PostgreSQL pgcrypto (bcrypt) RPC orqali bajariladi.
+ */
+export const verifyAdminCredentials = async (
+  loginInput: string,
+  passwordInput: string
+): Promise<{ success: boolean; error?: string }> => {
+  const cleanLogin = loginInput.trim().toLowerCase();
+  const cleanPassword = passwordInput.trim();
+
+  if (!cleanLogin || !cleanPassword) {
+    return { success: false, error: 'Login va parolni kiriting' };
+  }
+
+  const supabase = getSupabase();
+  if (!supabase) {
+    return {
+      success: false,
+      error: 'Server bilan aloqa o\'rnatilmadi. Supabase ulanishi mavjud emas.'
+    };
+  }
+
+  try {
+    // 1. Supabase Edge Function orqali tekshirish (agar o'rnatilgan bo'lsa)
+    try {
+      const { data: edgeData, error: edgeError } = await supabase.functions.invoke('admin-auth', {
+        body: { login: cleanLogin, password: cleanPassword }
+      });
+      if (!edgeError && edgeData) {
+        if (edgeData.success === true) {
+          return { success: true };
+        } else {
+          return { success: false, error: edgeData.error || 'Login yoki parol noto\'g\'ri kiritildi' };
+        }
+      }
+    } catch {
+      // Edge Function mavjud bo'lmasa, to'g'ridan-to'g'ri PostgreSQL RPC tekshiruviga o'tadi
+    }
+
+    // 2. Supabase Server-side RPC funksiyasi (SECURITY DEFINER / pgcrypto bcrypt)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_verify_credentials', {
+      p_login: cleanLogin,
+      p_password: cleanPassword
+    });
+
+    if (!rpcError) {
+      if (rpcData === true) {
+        return { success: true };
+      } else {
+        return { success: false, error: 'Login yoki parol noto\'g\'ri kiritildi' };
+      }
+    }
+
+    console.error('[Admin Auth] Supabase RPC xatosi:', rpcError);
+    return {
+      success: false,
+      error: 'Serverda autentifikatsiya xatosi yuz berdi. Iltimos, administrator bilan bog\'laning.'
+    };
+  } catch (err: any) {
+    console.error('[Admin Auth] Tarmoq yoki server xatosi:', err);
+    return {
+      success: false,
+      error: 'Serverga ulanishda xatolik yuz berdi: ' + (err.message || 'Tarmoq xatosi')
+    };
+  }
+};
+
 // 4. Barcha e'lonlarni olish (Admin uchun barcha statuslar, shu jumladan nobakor / o'chirilganlar)
 export const fetchAllAdminListings = async (): Promise<Listing[]> => {
   const supabase = getSupabase();
@@ -135,7 +204,7 @@ export const fetchAllAdminListings = async (): Promise<Listing[]> => {
   return getStoredListings();
 };
 
-// 5. Barcha foydalanuvchilarni olish (parollari bilan)
+// 5. Barcha foydalanuvchilarni olish (parollarsiz, xavfsiz)
 export const fetchAllAdminUsers = async (): Promise<Array<User & { listings_count?: number }>> => {
   const supabase = getSupabase();
   let users: User[] = [];
@@ -153,7 +222,7 @@ export const fetchAllAdminUsers = async (): Promise<Array<User & { listings_coun
           ism: u.ism,
           telefon: u.telefon,
           email: u.email,
-          parol: u.parol_hash ? atob(u.parol_hash) : u.parol || '123456',
+          parol: undefined,
           avatar_url: u.avatar_url,
           is_admin: u.is_admin,
           is_blocked: u.is_blocked,
@@ -173,26 +242,32 @@ export const fetchAllAdminUsers = async (): Promise<Array<User & { listings_coun
 
   return users.map(u => ({
     ...u,
-    parol: u.parol || '123456',
+    parol: undefined,
     listings_count: listings.filter(l => l.user_id === u.id).length
   }));
 };
 
-// 6. Admin tomonidan foydalanuvchi ma'lumotlarini (ism, telefon, email, parol) to'g'ridan-to'g'ri tahrirlash
+// 6. Admin tomonidan foydalanuvchi ma'lumotlarini to'g'ridan-to'g'ri tahrirlash (Bcrypt xeshlash bilan)
 export const updateAdminUser = async (userId: string, data: Partial<User>): Promise<boolean> => {
   const supabase = getSupabase();
+  const passHash = data.parol && data.parol.trim() ? hashPassword(data.parol.trim()) : undefined;
+
   if (supabase) {
     try {
+      const updatePayload: Record<string, any> = {
+        ism: data.ism,
+        telefon: data.telefon,
+        email: data.email,
+        is_admin: data.is_admin,
+        is_blocked: data.is_blocked
+      };
+      if (passHash) {
+        updatePayload.parol_hash = passHash;
+      }
+
       await supabase
         .from('users')
-        .update({
-          ism: data.ism,
-          telefon: data.telefon,
-          email: data.email,
-          parol_hash: data.parol ? btoa(data.parol) : undefined,
-          is_admin: data.is_admin,
-          is_blocked: data.is_blocked
-        })
+        .update(updatePayload)
         .eq('id', userId);
     } catch (e) {
       console.warn('Supabase updateAdminUser error:', e);
@@ -202,7 +277,11 @@ export const updateAdminUser = async (userId: string, data: Partial<User>): Prom
   const users = getStoredUsers();
   const index = users.findIndex(u => u.id === userId);
   if (index !== -1) {
-    users[index] = { ...users[index], ...data };
+    users[index] = {
+      ...users[index],
+      ...data,
+      parol: undefined
+    };
     localStorage.setItem('uybozor_users', JSON.stringify(users));
   }
 

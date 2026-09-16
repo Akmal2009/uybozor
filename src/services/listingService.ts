@@ -4,8 +4,8 @@ import { getSupabase } from './supabase';
 
 const LISTINGS_STORAGE_KEY = 'uybozor_listings';
 
-// Yordamchi timeout funksiyasi (Supabase qotib qolmasligi uchun 2 soniyalik limit)
-const withTimeout = async <T>(promise: PromiseLike<T>, timeoutMs = 2000): Promise<T> => {
+// Yordamchi timeout funksiyasi (Supabase so'rovi uchun 6 soniyalik xavfsiz vaqt)
+const withTimeout = async <T>(promise: PromiseLike<T>, timeoutMs = 6000): Promise<T> => {
   let timer: any;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error('Supabase so\'rov vaqti tugadi')), timeoutMs);

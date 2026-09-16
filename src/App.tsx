@@ -60,17 +60,6 @@ const UserAppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 };
 
 export const App: React.FC = () => {
-  useEffect(() => {
-    // Sayt ochilishini sekinlashtirmaslik uchun Telegram bot polling 1.5 soniyadan so'ng ishga tushadi
-    const timer = setTimeout(() => {
-      import('./services/telegramService').then(m => {
-        m.startTelegramBotPolling();
-      });
-    }, 1500);
-
-    return () => clearTimeout(timer);
-  }, []);
-
   return (
     <Router>
       <AuthProvider>

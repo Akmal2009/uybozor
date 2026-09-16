@@ -1,6 +1,40 @@
 import { User } from '../types';
 import { INITIAL_USERS } from './mockData';
 import { getSupabase } from './supabase';
+import bcrypt from 'bcryptjs';
+
+/**
+ * Parolni xavfsiz hashlash (bcrypt)
+ */
+export const hashPassword = (password: string): string => {
+  return bcrypt.hashSync(password, 10);
+};
+
+/**
+ * Parolni tekshirish (bcrypt yoki legacy base64 orqali)
+ */
+export const comparePassword = (password: string, hashOrEncoded: string): boolean => {
+  if (!hashOrEncoded) return false;
+
+  // 1. Agar bcrypt hash ($2a$, $2b$, $2y$) bo'lsa
+  if (hashOrEncoded.startsWith('$2a$') || hashOrEncoded.startsWith('$2b$') || hashOrEncoded.startsWith('$2y$')) {
+    try {
+      return bcrypt.compareSync(password, hashOrEncoded);
+    } catch {
+      return false;
+    }
+  }
+
+  // 2. Eski tizim (btoa / base64) bilan moslashuvchanlik
+  try {
+    if (atob(hashOrEncoded) === password) {
+      return true;
+    }
+  } catch {}
+
+  // 3. To'g'ridan-to'g'ri solishtirish (agar test baza ochiq matnda qolgan bo'lsa)
+  return hashOrEncoded === password;
+};
 
 const USERS_STORAGE_KEY = 'uybozor_users';
 const CURRENT_USER_KEY = 'uybozor_current_user';
@@ -82,7 +116,7 @@ export const registerUser = async (
             ism,
             telefon,
             email: email || null,
-            parol_hash: btoa(userPassword),
+            parol_hash: hashPassword(userPassword),
             avatar_url: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(ism)}`
           }
         ])
@@ -155,7 +189,7 @@ export const loginUser = async (
           ism: data.ism,
           telefon: data.telefon,
           email: data.email,
-          parol: data.parol_hash ? atob(data.parol_hash) : '123456',
+          parol: undefined, // Parol hech qachon client ob'ektida ochiq saqlanmaydi
           avatar_url: data.avatar_url,
           is_admin: data.is_admin,
           is_blocked: data.is_blocked,
@@ -185,15 +219,14 @@ export const loginUser = async (
     throw new Error('Bunday foydalanuvchi topilmadi! Iltimos, telefon raqamingizni tekshiring yoki ro\'yxatdan o\'ting.');
   }
 
-  // AGAR PAROL KIRITILGAN BO'LSA -> PAROLNI ANIQ TEKSHIRISH
+  // AGAR PAROL KIRITILGAN BO'LSA -> PAROLNI ANIQ TEKSHIRISH (BCRYPT)
   if (kiritilganParol !== undefined && kiritilganParol.trim() !== '') {
     const inputPass = kiritilganParol.trim();
-    const correctPass = foundUser.parol;
-
     let isPasswordCorrect = false;
-    if (correctPass && correctPass === inputPass) {
+
+    if (dbParolHash && comparePassword(inputPass, dbParolHash)) {
       isPasswordCorrect = true;
-    } else if (dbParolHash && dbParolHash === btoa(inputPass)) {
+    } else if (foundUser.parol && comparePassword(inputPass, foundUser.parol)) {
       isPasswordCorrect = true;
     }
 
@@ -228,7 +261,7 @@ export const resetUserPassword = async (
       await supabase
         .from('users')
         .update({
-          parol_hash: btoa(yangiParol)
+          parol_hash: hashPassword(yangiParol)
         })
         .eq('id', users[index].id);
     } catch (e) {
@@ -258,7 +291,7 @@ export const updateUserProfile = async (
           telefon: updatedData.telefon,
           email: updatedData.email,
           avatar_url: updatedData.avatar_url,
-          parol_hash: updatedData.parol ? btoa(updatedData.parol) : undefined
+          parol_hash: updatedData.parol ? hashPassword(updatedData.parol) : undefined
         })
         .eq('id', userId);
     } catch (e) {

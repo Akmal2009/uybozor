@@ -13,8 +13,6 @@ import {
   Edit,
   Trash2,
   Lock,
-  Eye,
-  EyeOff,
   X,
   Check,
   Shield,
@@ -29,7 +27,6 @@ export const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<Array<User & { listings_count?: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showPasswords, setShowPasswords] = useState<{ [key: string]: boolean }>({});
 
   // Tahrirlash modali holati
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -57,19 +54,12 @@ export const AdminUsers: React.FC = () => {
     loadUsers();
   }, []);
 
-  const togglePasswordVisibility = (userId: string) => {
-    setShowPasswords(prev => ({
-      ...prev,
-      [userId]: !prev[userId]
-    }));
-  };
-
   const handleOpenEdit = (u: User) => {
     setEditingUser(u);
     setEditName(u.ism);
     setEditPhone(u.telefon);
     setEditEmail(u.email || '');
-    setEditPassword(u.parol || '123456');
+    setEditPassword('');
     setEditIsAdmin(Boolean(u.is_admin));
     setEditIsBlocked(Boolean(u.is_blocked));
   };
@@ -83,7 +73,7 @@ export const AdminUsers: React.FC = () => {
         ism: editName,
         telefon: editPhone,
         email: editEmail || undefined,
-        parol: editPassword,
+        parol: editPassword.trim() ? editPassword.trim() : undefined,
         is_admin: editIsAdmin,
         is_blocked: editIsBlocked
       });
@@ -129,7 +119,7 @@ export const AdminUsers: React.FC = () => {
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-white">Foydalanuvchilar Boshqaruvi</h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Barcha foydalanuvchilar ma'lumotlari, login, parollari, tahrirlash va o'chirish.
+            Barcha foydalanuvchilar ma'lumotlari, login, holat, tahrirlash va o'chirish.
           </p>
         </div>
 
@@ -185,7 +175,6 @@ export const AdminUsers: React.FC = () => {
                   <th className="px-5 py-4">Foydalanuvchi</th>
                   <th className="px-5 py-4">Telefon (Login)</th>
                   <th className="px-5 py-4">Email</th>
-                  <th className="px-5 py-4">Parol</th>
                   <th className="px-5 py-4">E'lonlar</th>
                   <th className="px-5 py-4">Holat</th>
                   <th className="px-5 py-4 text-right">Admin Amallari</th>
@@ -227,22 +216,6 @@ export const AdminUsers: React.FC = () => {
 
                     <td className="px-5 py-4 text-slate-400">
                       {u.email || '—'}
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-1.5 font-mono">
-                        <span className="px-2 py-1 bg-slate-950 rounded-lg text-slate-300 font-semibold text-xs border border-slate-800">
-                          {showPasswords[u.id] ? u.parol || '123456' : '••••••••'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => togglePasswordVisibility(u.id)}
-                          className="p-1 text-slate-500 hover:text-slate-300 transition-colors"
-                          title="Parolni ko'rish/yashirish"
-                        >
-                          {showPasswords[u.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
                     </td>
 
                     <td className="px-5 py-4">
@@ -361,13 +334,13 @@ export const AdminUsers: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Parol</label>
+                <label className="block text-slate-300 font-semibold mb-1">Yangi parol (ixtiyoriy)</label>
                 <input
                   type="text"
-                  required
                   value={editPassword}
                   onChange={(e) => setEditPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="O'zgartirish uchun yangi parol kiriting..."
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder-slate-600"
                 />
               </div>
 

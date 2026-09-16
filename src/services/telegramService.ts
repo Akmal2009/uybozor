@@ -1,6 +1,5 @@
 import { getSupabase } from './supabase';
-import { updateListing, deleteListing, fetchListingById } from './listingService';
-import { updateLoginRequestStatus } from './adminService';
+import { fetchListingById } from './listingService';
 
 // ============================================================================
 // ⚙️ TELEGRAM BOT SOZLAMALARI (VITE ENVIRONMENT VARIABLES)
@@ -8,19 +7,28 @@ import { updateLoginRequestStatus } from './adminService';
 const env = (import.meta as any).env || {};
 
 export const TELEGRAM_CONFIG = {
-  BOT_TOKEN: env.VITE_TELEGRAM_BOT_TOKEN || '8518990743:AAHFTvp4Qtku_v4St7SQLYj37dhtntgWOHY',
-  ADMIN_CHAT_ID: env.VITE_ADMIN_CHAT_ID || '8500341142', // Haqiqiy Bosh Admin Chat ID
-  BOT_USERNAME: env.VITE_TELEGRAM_BOT_USERNAME || 'Uybozorinbot'
+  // 1. ADMIN BOT (Ruxsat so'rash boti: e'lon moderatsiyasi, 2FA admin kirish, tahrirlash so'rovi)
+  ADMIN_BOT_TOKEN: env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || env.VITE_TELEGRAM_BOT_TOKEN || '',
+  ADMIN_CHAT_ID: env.VITE_ADMIN_CHAT_ID || '',
+  ADMIN_BOT_USERNAME: env.VITE_TELEGRAM_ADMIN_BOT_USERNAME || 'Uybozorinbot',
+
+  // 2. USER BOT (Foydalanuvchi Kod Boti: faqat ro'yxatdan o'tish va parolni tiklash kodi uchun)
+  USER_BOT_TOKEN: env.VITE_TELEGRAM_USER_BOT_TOKEN || '',
+  USER_BOT_USERNAME: env.VITE_TELEGRAM_USER_BOT_USERNAME || 'uybozorcodebot',
+
+  // Orqaga moslik uchun
+  get BOT_TOKEN() { return this.ADMIN_BOT_TOKEN; },
+  get BOT_USERNAME() { return this.USER_BOT_USERNAME; }
 };
 
 export const getTelegramBotLink = (): string => {
-  const username = TELEGRAM_CONFIG.BOT_USERNAME || 'Uybozorinbot';
+  const username = TELEGRAM_CONFIG.USER_BOT_USERNAME || 'uybozorcodebot';
   return `https://t.me/${username.replace('@', '')}`;
 };
 
 // Telegram orqali botni ochish va telefon orqali ulash linki
 export const getTelegramBotOtpLink = (phone?: string): string => {
-  const username = TELEGRAM_CONFIG.BOT_USERNAME || 'Uybozorinbot';
+  const username = TELEGRAM_CONFIG.USER_BOT_USERNAME || 'uybozorcodebot';
   const cleanPhone = phone ? phone.replace(/[^\d]/g, '') : '';
   if (cleanPhone) {
     return `https://t.me/${username.replace('@', '')}?start=${cleanPhone}`;
@@ -35,17 +43,33 @@ export const getActiveAdminChatId = (): string => {
 
 // Foydalanuvchining shaxsiy Telegram Chat ID sini olish (agar bot bilan bog'langan bo'lsa)
 // DIQQAT: Hech qachon Admin Chat ID sini qaytarmaydi! Foydalanuvchiga faqat o'z kodi boradi.
-export const getUserChatId = (phone: string): string => {
+export const getUserChatId = async (phone: string): Promise<string> => {
   const cleanPhone = phone.replace(/[^\d]/g, '');
+  if (!cleanPhone) return '';
+
+  // 1. Avval Supabase telegram_users jadvalidan tekshiramiz
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('telegram_users')
+        .select('chat_id')
+        .eq('phone', cleanPhone)
+        .maybeSingle();
+
+      if (!error && data?.chat_id && data.chat_id !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
+        return data.chat_id;
+      }
+    } catch (e) {
+      console.warn('[Telegram] Supabase telegram_users check error:', e);
+    }
+  }
+
+  // 2. Fallback: localStorage keshidan tekshiramiz
   const userChatId = typeof localStorage !== 'undefined' ? localStorage.getItem(`user_tg_chat_${cleanPhone}`) : null;
   if (userChatId && userChatId.trim() !== '') {
-    return userChatId;
-  }
-  const latestUserChatId = typeof localStorage !== 'undefined' ? localStorage.getItem('user_latest_tg_chat_id') : null;
-  if (latestUserChatId && latestUserChatId.trim() !== '') {
-    // Agar latestUserChatId adminga tegishli bo'lsa, uni oddiy foydalanuvchiga bermaymiz
-    if (latestUserChatId !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
-      return latestUserChatId;
+    if (userChatId !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
+      return userChatId;
     }
   }
   return '';
@@ -71,7 +95,7 @@ export interface ListingNotificationData {
 export const sendTelegramNotification = async (
   listing: ListingNotificationData
 ): Promise<{ success: boolean; data?: any; error?: string }> => {
-  const token = TELEGRAM_CONFIG.BOT_TOKEN;
+  const token = TELEGRAM_CONFIG.ADMIN_BOT_TOKEN;
   const chatId = getActiveAdminChatId();
 
   if (!token || token.includes('your_bot_token') || token.trim() === '') {
@@ -154,7 +178,7 @@ export const sendAdminLoginTelegramNotification = async (
   adminName: string,
   adminPhone: string
 ): Promise<{ success: boolean; error?: string }> => {
-  const token = TELEGRAM_CONFIG.BOT_TOKEN;
+  const token = TELEGRAM_CONFIG.ADMIN_BOT_TOKEN;
   const chatId = getActiveAdminChatId();
 
   const messageText = `
@@ -206,7 +230,7 @@ export const sendAdminLoginTelegramNotification = async (
  * 3. Tahrirlash ruxsat so'rovi
  */
 export const requestEditPermission = async (listingId: string): Promise<boolean> => {
-  const token = TELEGRAM_CONFIG.BOT_TOKEN;
+  const token = TELEGRAM_CONFIG.ADMIN_BOT_TOKEN;
   const chatId = getActiveAdminChatId();
 
   const listing = await fetchListingById(listingId);
@@ -261,7 +285,7 @@ export const requestEditPermission = async (listingId: string): Promise<boolean>
  * 3.1. VIP maqomini olish so'rovi (Telegram orqali adminga yuborish)
  */
 export const requestVipPermission = async (listingId: string): Promise<boolean> => {
-  const token = TELEGRAM_CONFIG.BOT_TOKEN;
+  const token = TELEGRAM_CONFIG.ADMIN_BOT_TOKEN;
   const chatId = getActiveAdminChatId();
 
   const listing = await fetchListingById(listingId);
@@ -321,9 +345,9 @@ export const sendTelegramOtpCode = async (
   purposeOrName?: string,
   maybeName?: string
 ): Promise<{ success: boolean; code: string; error?: string }> => {
-  const token = TELEGRAM_CONFIG.BOT_TOKEN;
+  const token = TELEGRAM_CONFIG.USER_BOT_TOKEN;
   const cleanPhone = phone.replace(/[^\d]/g, '');
-  const targetChatId = getUserChatId(cleanPhone);
+  const targetChatId = await getUserChatId(cleanPhone);
 
   const purpose = (purposeOrName && (purposeOrName.includes('o\'tish') || purposeOrName.includes('tiklash') || purposeOrName.includes('o\'zgartirish')))
     ? purposeOrName
@@ -340,16 +364,24 @@ export const sendTelegramOtpCode = async (
     expiresAt: Date.now() + 5 * 60 * 1000 // 5 daqiqa
   };
 
-  try {
-    localStorage.setItem(`uybozor_otp_${cleanPhone}`, JSON.stringify(otpData));
-    localStorage.setItem('uybozor_latest_otp', JSON.stringify(otpData));
-  } catch (e) {
-    // fallback
+  // Supabase otp_codes jadvaliga yozish (faqat server bazasida saqlanadi, xavfsiz)
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error('Supabase xizmati mavjud emas. Tasdiqlash kodi saqlanmadi.');
   }
 
-  // Faqat chat ID mavjud bo'lsa bot orqali xabar yuboramiz
-  if (targetChatId && targetChatId.trim() !== '') {
-    const messageText = `
+  const { error: dbError } = await supabase.from('otp_codes').upsert({
+    phone: cleanPhone,
+    code,
+    expires_at: new Date(otpData.expiresAt).toISOString()
+  });
+
+  if (dbError) {
+    console.error('[Telegram OTP] Supabase otp_codes saqlashda xatolik:', dbError);
+    throw new Error('Tasdiqlash kodini bazada saqlashda xatolik yuz berdi.');
+  }
+
+  const messageText = `
 🔐 <b>"Arzon Uy" Tasdiqlash Kodi</b>
 
 👤 <b>Foydalanuvchi:</b> ${name || 'Foydalanuvchi'}
@@ -361,6 +393,8 @@ export const sendTelegramOtpCode = async (
 ⏳ <i>Ushbu 4 xonali kod 5 daqiqa davomida amal qiladi. Saytga aynan shu kodni kiriting.</i>
 `.trim();
 
+  // 1. Agar foydalanuvchining o'z chat ID si mavjud bo'lsa, unga yuboramiz
+  if (targetChatId && targetChatId.trim() !== '') {
     try {
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
@@ -371,36 +405,62 @@ export const sendTelegramOtpCode = async (
           parse_mode: 'HTML'
         })
       });
-    } catch (err: any) {
-      // ignore
-    }
+    } catch (err: any) {}
+  }
+
+  // 2. Ro'yxatdan o'tishda kod darhol Telegram botga ham yetib borishi shart!
+  if (!targetChatId || targetChatId !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CONFIG.ADMIN_CHAT_ID,
+          text: messageText,
+          parse_mode: 'HTML'
+        })
+      });
+    } catch (err: any) {}
   }
 
   return { success: true, code };
 };
 
 /**
- * 5. Kiritilgan OTP kodni tekshirish
+ * 5. Kiritilgan OTP kodni tekshirish (Faqat Supabase bazasidagi otp_codes jadvali orqali)
+ * DIQQAT: Xavfsizlik maqsadida hech qanday localStorage fallback ishlatilmaydi!
  */
-export const verifyTelegramOtpCode = (phone: string, inputCode: string): boolean => {
-  const cleanPhone = phone.replace(/\s+/g, '');
-  const rawData = localStorage.getItem(`uybozor_otp_${cleanPhone}`) || localStorage.getItem('uybozor_latest_otp');
+export const verifyTelegramOtpCode = async (phone: string, inputCode: string): Promise<boolean> => {
+  const cleanPhone = phone.replace(/[^\d]/g, '');
+  const cleanInput = (inputCode || '').trim();
+  if (!cleanPhone || !cleanInput) return false;
 
-  if (!rawData) {
+  const supabase = getSupabase();
+  if (!supabase) {
+    console.error('[Telegram OTP] Supabase ulanishi topilmadi!');
     return false;
   }
 
   try {
-    const { code, expiresAt } = JSON.parse(rawData);
-    if (Date.now() > expiresAt) {
-      localStorage.removeItem(`uybozor_otp_${cleanPhone}`);
-      localStorage.removeItem('uybozor_latest_otp');
+    const { data, error } = await supabase
+      .from('otp_codes')
+      .select('code, expires_at')
+      .eq('phone', cleanPhone)
+      .maybeSingle();
+
+    if (error || !data) {
+      return false;
+    }
+
+    const isExpired = new Date(data.expires_at).getTime() < Date.now();
+    if (isExpired) {
+      await supabase.from('otp_codes').delete().eq('phone', cleanPhone);
       throw new Error('Tasdiqlash kodining amal qilish muddati tugagan! Iltimos, yangi kod so\'rang.');
     }
 
-    if (code.trim() === inputCode.trim()) {
-      localStorage.removeItem(`uybozor_otp_${cleanPhone}`);
-      localStorage.removeItem('uybozor_latest_otp');
+    if (data.code && data.code.trim() === cleanInput) {
+      // Bir martalik kod muvaffaqiyatli ishlatilgach, darhol bazadan o'chiriladi
+      await supabase.from('otp_codes').delete().eq('phone', cleanPhone);
       return true;
     }
 
@@ -409,264 +469,9 @@ export const verifyTelegramOtpCode = (phone: string, inputCode: string): boolean
     if (e.message && e.message.includes('muddati')) {
       throw e;
     }
+    console.warn('[Telegram] Supabase otp_codes verify error:', e);
     return false;
   }
 };
 
-export const handleApproval = async (listingId: string, status: 'faol' | 'rad_etildi'): Promise<boolean> => {
-  try {
-    await updateListing(listingId, { holat: status });
-    return true;
-  } catch (err) {
-    return false;
-  }
-};
 
-// Polling jarayoni
-let isPollingActive = false;
-let lastUpdateId = 0;
-
-export const startTelegramBotPolling = () => {
-  if (isPollingActive) return;
-  isPollingActive = true;
-
-  const token = TELEGRAM_CONFIG.BOT_TOKEN;
-  if (!token || token.trim() === '') return;
-
-  const poll = async () => {
-    if (!isPollingActive) return;
-
-    try {
-      const response = await fetch(
-        `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=10`
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.ok && data.result && data.result.length > 0) {
-          for (const update of data.result) {
-            lastUpdateId = update.update_id;
-
-            // Foydalanuvchi botga xabar yozganda
-            if (update.message && update.message.chat) {
-              const userChatId = update.message.chat.id.toString();
-              const text = (update.message.text || '').trim();
-              const userName = update.message.from?.first_name || 'Foydalanuvchi';
-              const isAdminUser = userChatId === TELEGRAM_CONFIG.ADMIN_CHAT_ID;
-
-              // Agar oddiy foydalanuvchi bo'lsa, uning chat ID sini OTP uchun saqlaymiz (Adminga daxl qilmaydi)
-              if (!isAdminUser) {
-                localStorage.setItem('user_latest_tg_chat_id', userChatId);
-              }
-
-              if (text.startsWith('/start')) {
-                // Link orqali kelganda telefon parametri bo'lishi mumkin: masalan /start 998901234567
-                const parts = text.split(/\s+/);
-                const payloadPhone = parts.length > 1 ? parts[1].replace(/[^\d]/g, '') : '';
-                if (payloadPhone && !isAdminUser) {
-                  localStorage.setItem(`user_tg_chat_${payloadPhone}`, userChatId);
-                }
-
-                if (isAdminUser) {
-                  try {
-                    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        chat_id: userChatId,
-                        text: `👨‍💼 <b>Assalomu alaykum, Bosh Administrator (${userName})!</b>\n\n✅ Sayt boshqaruvi, yangi e'lonlar, VIP so'rovlari va 2FA login tasdiqlashlari FAQAT sizning ushbu Telegramingizga yuboriladi. Boshqa foydalanuvchilarga bu ma'lumotlar bormaydi.`,
-                        parse_mode: 'HTML'
-                      })
-                    });
-                  } catch (e) {
-                    console.error('Admin /start xatosi:', e);
-                  }
-                } else {
-                  // Oddiy foydalanuvchi uchun OTP kodini qidirish
-                  let otpCode = '';
-                  if (payloadPhone) {
-                    const phoneOtpRaw = localStorage.getItem(`uybozor_otp_${payloadPhone}`);
-                    if (phoneOtpRaw) {
-                      try {
-                        const parsed = JSON.parse(phoneOtpRaw);
-                        if (Date.now() <= parsed.expiresAt) {
-                          otpCode = parsed.code;
-                        }
-                      } catch {}
-                    }
-                  }
-                  if (!otpCode) {
-                    const latestOtpRaw = localStorage.getItem('uybozor_latest_otp');
-                    if (latestOtpRaw) {
-                      try {
-                        const parsed = JSON.parse(latestOtpRaw);
-                        if (Date.now() <= parsed.expiresAt) {
-                          otpCode = parsed.code;
-                        }
-                      } catch {}
-                    }
-                  }
-
-                  let userMsg = `👋 <b>Assalomu alaykum, ${userName}!</b>\n\n"Arzon Uy" rasmiy botiga xush kelibsiz!`;
-                  if (otpCode) {
-                    userMsg += `\n\n🔐 <b>Sizning tasdiqlash kodingiz:</b> <code>${otpCode}</code>\n\n⏳ <i>Ushbu 4 xonali kodni saytdagi oynaga kiriting. Amal qilish muddati: 5 daqiqa.</i>`;
-                  } else {
-                    userMsg += `\n\nSaytda ro'yxatdan o'tayotganda yoki parolni tiklashda 4 xonali tasdiqlash kodi shu yerga yuboriladi.`;
-                  }
-
-                  try {
-                    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        chat_id: userChatId,
-                        text: userMsg,
-                        parse_mode: 'HTML'
-                      })
-                    });
-                  } catch (e) {
-                    console.error('/start javob xatosi:', e);
-                  }
-                }
-              } else if (!isAdminUser) {
-                // Oddiy foydalanuvchi boshqa ixtiyoriy xabar yozsa (masalan "kod")
-                const latestOtpRaw = localStorage.getItem('uybozor_latest_otp');
-                let otpCode = '';
-                if (latestOtpRaw) {
-                  try {
-                    const parsed = JSON.parse(latestOtpRaw);
-                    if (Date.now() <= parsed.expiresAt) {
-                      otpCode = parsed.code;
-                    }
-                  } catch {}
-                }
-
-                let replyMsg = `👋 <b>Assalomu alaykum, ${userName}!</b>`;
-                if (otpCode) {
-                  replyMsg += `\n\n🔐 <b>Sizning tasdiqlash kodingiz:</b> <code>${otpCode}</code>\n\n⏳ <i>Ushbu 4 xonali kodni saytga kiriting.</i>`;
-                } else {
-                  replyMsg += `\n\n"Arzon Uy" tizimiga xush kelibsiz! Saytda tasdiqlash so'ralganda kodingiz shu yerga yuboriladi.`;
-                }
-
-                try {
-                  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      chat_id: userChatId,
-                      text: replyMsg,
-                      parse_mode: 'HTML'
-                    })
-                  });
-                } catch (e) {}
-              }
-            }
-
-            // Inline tugmalar bosilganda
-            if (update.callback_query) {
-              const callback = update.callback_query;
-              const callbackSenderId = callback.from?.id ? callback.from.id.toString() : '';
-              const callbackData: string = callback.data || '';
-              const callbackId: string = callback.id;
-              const message = callback.message;
-
-              // Tugmalarni faqat haqiqiy ADMIN bosa oladi!
-              if (callbackSenderId !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
-                try {
-                  await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      callback_query_id: callbackId,
-                      text: '⛔ Ruxsat berilmadi! Siz administrator emassiz.',
-                      show_alert: true
-                    })
-                  });
-                } catch (e) {}
-                continue;
-              }
-
-              let actionText = '';
-
-              if (callbackData.startsWith('approve_login_')) {
-                const reqId = callbackData.replace('approve_login_', '');
-                await updateLoginRequestStatus(reqId, 'tasdiqlangan');
-                actionText = '✅ Admin panelga kirishga ruxsat berildi!';
-              } else if (callbackData.startsWith('reject_login_')) {
-                const reqId = callbackData.replace('reject_login_', '');
-                await updateLoginRequestStatus(reqId, 'rad_etilgan');
-                actionText = '❌ Admin panelga kirish rad etildi.';
-              } else if (callbackData.startsWith('approve_vip_')) {
-                const listingId = callbackData.replace('approve_vip_', '');
-                await updateListing(listingId, { holat: 'faol', is_vip: true, vip_requested: false });
-                actionText = '⭐ E\'lon VIP maqomida tasdiqlandi va saytda faollashdi!';
-              } else if (callbackData.startsWith('reject_vip_')) {
-                const listingId = callbackData.replace('reject_vip_', '');
-                await updateListing(listingId, { vip_requested: false });
-                actionText = '❌ VIP maqomi so\'rovi rad etildi.';
-              } else if (callbackData.startsWith('approve_')) {
-                const listingId = callbackData.replace('approve_', '');
-                await handleApproval(listingId, 'faol');
-                actionText = '✅ E\'lon admin tomonidan tasdiqlandi va saytda faol qilindi!';
-              } else if (callbackData.startsWith('reject_')) {
-                const listingId = callbackData.replace('reject_', '');
-                await handleApproval(listingId, 'rad_etildi');
-                actionText = '❌ E\'lon admin tomonidan rad etildi.';
-              } else if (callbackData.startsWith('delete_')) {
-                const listingId = callbackData.replace('delete_', '');
-                await deleteListing(listingId);
-                actionText = '🗑 E\'lon admin tomonidan butunlay o\'chirildi!';
-              } else if (callbackData.startsWith('allow_edit_')) {
-                const listingId = callbackData.replace('allow_edit_', '');
-                await updateListing(listingId, { can_edit: true, edit_requested: false });
-                actionText = '✅ Foydalanuvchiga e\'lonni 1 marta tahrirlash uchun ruxsat berildi!';
-              } else if (callbackData.startsWith('deny_edit_')) {
-                const listingId = callbackData.replace('deny_edit_', '');
-                await updateListing(listingId, { can_edit: false, edit_requested: false });
-                actionText = '❌ Tahrirlash so\'rovi admin tomonidan rad etildi.';
-              }
-
-              if (actionText) {
-                try {
-                  await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      callback_query_id: callbackId,
-                      text: actionText,
-                      show_alert: true
-                    })
-                  });
-                } catch (e) {}
-
-                if (message && message.chat && message.message_id) {
-                  try {
-                    const updatedText = `${message.text}\n\n━━━━━━━━━━━━━━━\n<b>QAROR:</b> ${actionText}`;
-                    await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        chat_id: message.chat.id,
-                        message_id: message.message_id,
-                        text: updatedText,
-                        parse_mode: 'HTML'
-                      })
-                    });
-                  } catch (e) {}
-                }
-              }
-            }
-          }
-        }
-      }
-    } catch (err) {
-      // Tarmoq xatosi bo'lsa
-    } finally {
-      if (isPollingActive) {
-        setTimeout(poll, 3000);
-      }
-    }
-  };
-
-  poll();
-};

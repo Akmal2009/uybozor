@@ -34,7 +34,7 @@ export const ListingCard: React.FC<ListingCardProps> = ({ listing, priority = fa
             width={400}
             height={225}
             loading={priority ? 'eager' : 'lazy'}
-            fetchPriority={priority ? 'high' : 'auto'}
+            {...({ fetchpriority: priority ? 'high' : 'auto' } as any)}
             decoding="async"
             className="w-full h-full object-cover aspect-[16/9] transition-transform duration-500 group-hover:scale-105"
           />

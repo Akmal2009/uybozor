@@ -8,7 +8,7 @@ import {
   getActiveAdminChatId,
   TELEGRAM_CONFIG
 } from '../services/telegramService';
-import { ShieldCheck, Clock, CheckCircle2, XCircle, RefreshCw, ArrowLeft, KeyRound, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Clock, CheckCircle2, XCircle, RefreshCw, ArrowLeft, AlertTriangle } from 'lucide-react';
 
 interface AdminLoginConfirmProps {
   adminInfo: { name: string; phone: string };
@@ -26,8 +26,6 @@ export const AdminLoginConfirm: React.FC<AdminLoginConfirmProps> = ({
   const [timeLeft, setTimeLeft] = useState<number>(120); // 2 daqiqa
   const [loading, setLoading] = useState<boolean>(true);
   const [telegramError, setTelegramError] = useState<string>('');
-  const [showDirectApprove, setShowDirectApprove] = useState<boolean>(false);
-  const [pinInput, setPinInput] = useState<string>('');
 
   // 1. So'rovni yaratish va Telegram botga yuborish
   const initLoginRequest = async () => {
@@ -35,20 +33,19 @@ export const AdminLoginConfirm: React.FC<AdminLoginConfirmProps> = ({
     setStatus('kutilmoqda');
     setTimeLeft(120);
     setTelegramError('');
-    setShowDirectApprove(false);
 
     try {
       const newReq = await createLoginRequest(
         'admin-master',
-        adminInfo.name || 'Admin',
-        adminInfo.phone || 'admin_arzonuy'
+        adminInfo.name || 'Bosh Administrator',
+        adminInfo.phone || 'uyborakmal'
       );
       setRequestId(newReq.id);
 
       const tgResult = await sendAdminLoginTelegramNotification(
         newReq.id,
-        adminInfo.name || 'Admin',
-        adminInfo.phone || 'admin_arzonuy'
+        adminInfo.name || 'Bosh Administrator',
+        adminInfo.phone || 'uyborakmal'
       );
 
       if (!tgResult.success) {
@@ -90,6 +87,8 @@ export const AdminLoginConfirm: React.FC<AdminLoginConfirmProps> = ({
       if (currentStatus === 'tasdiqlangan') {
         setStatus('tasdiqlangan');
         sessionStorage.setItem('admin_2fa_approved', 'true');
+        sessionStorage.setItem('admin_session_req_id', requestId);
+        sessionStorage.setItem('admin_session_timestamp', Date.now().toString());
         setTimeout(() => {
           onApproved();
         }, 1000);
@@ -100,19 +99,6 @@ export const AdminLoginConfirm: React.FC<AdminLoginConfirmProps> = ({
 
     return () => clearInterval(interval);
   }, [requestId, status, onApproved]);
-
-  const handleDirectPinApprove = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pinInput.trim() === 'UyBozor#2026!AdminSecure' || pinInput.trim() === 'admin') {
-      setStatus('tasdiqlangan');
-      sessionStorage.setItem('admin_2fa_approved', 'true');
-      setTimeout(() => {
-        onApproved();
-      }, 500);
-    } else {
-      alert('Noto\'g\'ri xavfsizlik paroli!');
-    }
-  };
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -220,36 +206,9 @@ export const AdminLoginConfirm: React.FC<AdminLoginConfirmProps> = ({
           </div>
         )}
 
-        {/* Zaxira: To'g'ridan-to'g'ri Parol bilan tasdiqlash */}
-        <div className="pt-2 border-t border-slate-800">
-          {!showDirectApprove ? (
-            <button
-              type="button"
-              onClick={() => setShowDirectApprove(true)}
-              className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors flex items-center justify-center gap-1 mx-auto"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              Botga xabar kelmayaptimi? Parol bilan to'g'ridan-to'g'ri kirish
-            </button>
-          ) : (
-            <form onSubmit={handleDirectPinApprove} className="space-y-3 pt-2">
-              <input
-                type="password"
-                required
-                autoFocus
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Admin parolini qayta kiriting"
-                className="w-full text-center py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-xs shadow transition-all"
-              >
-                Tasdiqlash va Kirish
-              </button>
-            </form>
-          )}
+        {/* Xavfsizlik eslatmasi */}
+        <div className="pt-2 border-t border-slate-800 text-[11px] text-slate-500">
+          <span>🔒 Xavfsizlik talabi: Kirish faqat Telegram botdagi <b>"Ruxsat berish"</b> tugmasi orqali tasdiqlanadi.</span>
         </div>
       </div>
     </div>

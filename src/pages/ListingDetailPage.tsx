@@ -304,7 +304,7 @@ export const ListingDetailPage: React.FC = () => {
             width={1200}
             height={675}
             loading="eager"
-            fetchPriority="high"
+            {...({ fetchpriority: 'high' } as any)}
             decoding="async"
             className="w-full h-full object-cover transition-all duration-300"
           />

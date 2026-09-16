@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { updateUserProfile } from '../services/authService';
-import { sendTelegramOtpCode, verifyTelegramOtpCode, getTelegramBotOtpLink } from '../services/telegramService';
+import { sendTelegramOtpCode, verifyTelegramOtpCode, getTelegramBotOtpLink, TELEGRAM_CONFIG } from '../services/telegramService';
 import {
   X,
   User as UserIcon,
@@ -90,7 +90,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
     }
 
     // Yuborilgan to'g'ri kodni tekshirish
-    const isValidCode = verifyTelegramOtpCode(phone, smsCode);
+    const isValidCode = await verifyTelegramOtpCode(phone, smsCode);
     if (!isValidCode) {
       setError('❌ Tasdiqlash kodi noto\'g\'ri! Iltimos, to\'g\'ri 4 xonali kodni kiriting.');
       return;
@@ -245,7 +245,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 Xavfsizlik tasdig'i ({phone})
               </div>
               <p className="text-xs text-sky-800 leading-relaxed">
-                Tasdiqlash kodi <b>@Uybozorinbot</b> Telegram botimizga yuborildi.
+                Tasdiqlash kodi <b>@{TELEGRAM_CONFIG.USER_BOT_USERNAME}</b> Telegram botimizga yuborildi.
               </p>
               <a
                 href={getTelegramBotOtpLink(phone)}
@@ -253,7 +253,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                 rel="noreferrer"
                 className="w-full py-2.5 px-3 bg-[#0088cc] hover:bg-[#0077b5] text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
               >
-                <span>✈️ Telegram Botdan Kodni Olish (@Uybozorinbot)</span>
+                <span>✈️ Telegram Botdan Kodni Olish (@{TELEGRAM_CONFIG.USER_BOT_USERNAME})</span>
               </a>
             </div>
 

@@ -1,29 +1,11 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Lock, User, ArrowLeft, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { ShieldCheck, Lock, User, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { verifyAdminCredentials } from '../services/adminService';
 
 interface AdminLoginProps {
   onLoginSuccess: (adminInfo: { name: string; phone: string }) => void;
 }
-
-// Qabul qilinadigan loginlar
-const VALID_LOGINS = [
-  'admin_arzonuy',
-  'admin',
-  'arzonuy',
-  'admin@arzonuy.uz',
-  'admin@uybozor.uz'
-];
-
-// Qabul qilinadigan parollar
-const VALID_PASSWORDS = [
-  'UyBozor#2026!AdminSecure',
-  'UyBozor2026',
-  'admin123',
-  'admin',
-  '123456',
-  'admin2026'
-];
 
 export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
   const navigate = useNavigate();
@@ -33,13 +15,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleFillCredentials = () => {
-    setLoginInput('admin_arzonuy');
-    setPasswordInput('UyBozor#2026!AdminSecure');
-    setError('');
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -55,21 +31,27 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
       return;
     }
 
+    if (cleanLogin !== 'uyborakmal') {
+      setError('Xato! Login yoki parol noto\'g\'ri kiritildi.');
+      return;
+    }
+
     setLoading(true);
+    try {
+      const result = await verifyAdminCredentials(cleanLogin, cleanPassword);
 
-    const isLoginValid = VALID_LOGINS.includes(cleanLogin) || cleanLogin.includes('admin');
-    const isPasswordValid = VALID_PASSWORDS.includes(cleanPassword);
-
-    if (isLoginValid && isPasswordValid) {
+      if (result.success) {
+        onLoginSuccess({
+          name: 'Bosh Administrator',
+          phone: cleanLogin
+        });
+      } else {
+        setError(result.error || 'Xato! Login yoki parol noto\'g\'ri kiritildi.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Kirishni tekshirishda xatolik yuz berdi');
+    } finally {
       setLoading(false);
-      localStorage.setItem('is_current_user_admin', 'true');
-      onLoginSuccess({
-        name: 'Bosh Administrator',
-        phone: cleanLogin
-      });
-    } else {
-      setLoading(false);
-      setError('Xato! Login yoki parol noto\'g\'ri kiritildi. Iltimos tekshirib qayta kiriting yoki "Avtomatik to\'ldirish" tugmasini bosing.');
     }
   };
 

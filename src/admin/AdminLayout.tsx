@@ -22,6 +22,8 @@ export const AdminLayout: React.FC = () => {
 
   const handleAdminLogout = () => {
     sessionStorage.removeItem('admin_2fa_approved');
+    sessionStorage.removeItem('admin_session_req_id');
+    sessionStorage.removeItem('admin_session_timestamp');
     logout();
     window.location.href = '/';
   };
