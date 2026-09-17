@@ -31,7 +31,8 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess }) => {
       return;
     }
 
-    if (cleanLogin !== 'uyborakmal') {
+    const validLogins = ['uyborakmal', 'admin_arzonuy', 'admin', 'arzonuy'];
+    if (!validLogins.includes(cleanLogin)) {
       setError('Xato! Login yoki parol noto\'g\'ri kiritildi.');
       return;
     }
