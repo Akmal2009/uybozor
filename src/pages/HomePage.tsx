@@ -1,7 +1,7 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FilterState, Listing } from '../types';
-import { fetchListings } from '../services/listingService';
+import { fetchListings, getStoredListings } from '../services/listingService';
 import { FilterBar } from '../components/FilterBar';
 import { ListingCard } from '../components/ListingCard';
 import { Building2, Sparkles, TrendingUp, ShieldCheck, PlusCircle } from 'lucide-react';
@@ -29,8 +29,18 @@ export const HomePage: React.FC = () => {
     sortBy: 'yangi'
   });
 
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 1. Dastlabki yuklash: LocalStorage'dagi keshdan darhol (0.01s) ko'rsatish
+  const [listings, setListings] = useState<Listing[]>(() => {
+    try {
+      const cached = getStoredListings();
+      return Array.isArray(cached) && cached.length > 0
+        ? cached.filter(item => item && item.holat === 'faol')
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState<boolean>(() => listings.length === 0);
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
 
   useEffect(() => {
@@ -43,7 +53,9 @@ export const HomePage: React.FC = () => {
   }, [typeParam, cityParam]);
 
   const loadListings = async () => {
-    setLoading(true);
+    if (listings.length === 0) {
+      setLoading(true);
+    }
     try {
       const data = await fetchListings(filters);
       setListings(data);
