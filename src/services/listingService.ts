@@ -4,8 +4,8 @@ import { getSupabase } from './supabase';
 
 const LISTINGS_STORAGE_KEY = 'uybozor_listings';
 
-// Yordamchi timeout funksiyasi (Supabase so'rovi uchun 6 soniyalik xavfsiz vaqt)
-const withTimeout = async <T>(promise: PromiseLike<T>, timeoutMs = 6000): Promise<T> => {
+// Yordamchi timeout funksiyasi (Supabase so'rovi uchun 15 soniyalik xavfsiz vaqt)
+const withTimeout = async <T>(promise: PromiseLike<T>, timeoutMs = 15000): Promise<T> => {
   let timer: any;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error('Supabase so\'rov vaqti tugadi')), timeoutMs);
@@ -73,7 +73,7 @@ export const fetchListings = async (filter?: Partial<FilterState>): Promise<List
           .from('listings')
           .select('*')
           .order('yaratilgan_sana', { ascending: false }),
-        3500
+        15000
       );
 
       if (!res.error && Array.isArray(res.data)) {
@@ -192,7 +192,7 @@ export const fetchListingById = async (id: string): Promise<Listing | null> => {
     try {
       const res: any = await withTimeout(
         supabase.from('listings').select('*').eq('id', id).single(),
-        3000
+        15000
       );
       if (!res.error && res.data) {
         return res.data as Listing;
@@ -219,7 +219,7 @@ export const fetchUserListings = async (userId: string): Promise<Listing[]> => {
           .eq('user_id', userId)
           .neq('holat', 'nobakor')
           .order('yaratilgan_sana', { ascending: false }),
-        3000
+        15000
       );
 
       if (!res.error && Array.isArray(res.data)) {
