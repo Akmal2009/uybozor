@@ -456,13 +456,16 @@ async function handleUserUpdate(token, update) {
               ism: session.name,
               telefon: session.phone,
               parol_hash: passHash,
-              rol: 'foydalanuvchi',
+              is_admin: false,
+              is_blocked: false,
               yaratilgan_sana: new Date().toISOString()
             }
           ]);
 
           if (insertError) {
             console.error('[User Bot] users insert error:', insertError);
+            await sendMessage(token, chatId, '⚠️ Xatolik yuz berdi. Iltimos, qaytadan urinib ko\'ring: /start register');
+            return;
           }
 
           await supabase.from('telegram_users').upsert({
@@ -476,6 +479,8 @@ async function handleUserUpdate(token, update) {
           await supabase.from('bot_reg_sessions').delete().eq('chat_id', chatId);
         } catch (e) {
           console.error('[User Bot] registration error:', e.message);
+          await sendMessage(token, chatId, '⚠️ Tizimda xatolik yuz berdi. Iltimos, qaytadan urinib ko\'ring.');
+          return;
         }
 
         console.log(`[User Bot] ✅ Successfully registered user: ${session.name} (+${session.phone})`);

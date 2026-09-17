@@ -1,8 +1,9 @@
 import { Listing, User, Payment, LoginRequest } from '../types';
 import { getSupabase } from './supabase';
 import { getStoredListings, saveStoredListings, deleteListing, updateListing } from './listingService';
-import { getStoredUsers, hashPassword } from './authService';
+import { getStoredUsers, saveStoredUsers, hashPassword } from './authService';
 import { getStoredPayments } from './paymentService';
+import bcrypt from 'bcryptjs';
 
 const LOGIN_REQUESTS_KEY = 'uybozor_login_requests';
 
@@ -115,14 +116,115 @@ export const updateLoginRequestStatus = async (
 };
 
 /**
- * 3.1. Admin hisob ma'lumotlarini xavfsiz tekshirish (100% Server-side RPC / Edge Function)
- * DIQQAT: Frontend bundle ichida hech qanday maxfiy kalit yoki xesh saqlanmaydi!
- * Tekshiruv faqat Supabase Edge Function yoki PostgreSQL pgcrypto (bcrypt) RPC orqali bajariladi.
+ * 3.1. Admin hisobini ro'yxatdan o'tkazish (Supabase bazasiga xavfsiz bcrypt hesh bilan)
+ */
+export const registerAdminUser = async (
+  ism: string,
+  login: string,
+  telefon: string,
+  parol: string
+): Promise<{ success: boolean; error?: string }> => {
+  const cleanIsm = ism.trim();
+  const cleanLogin = login.trim().toLowerCase();
+  const cleanPhone = telefon.trim().replace(/\s+/g, '');
+  const cleanPassword = parol.trim();
+
+  if (!cleanIsm || !cleanLogin || !cleanPhone || !cleanPassword) {
+    return { success: false, error: 'Barcha maydonlarni to\'ldiring' };
+  }
+
+  if (cleanPassword.length < 6) {
+    return { success: false, error: 'Parol kamida 6 ta belgidan iborat bo\'lishi kerak' };
+  }
+
+  const supabase = getSupabase();
+  const passHash = bcrypt.hashSync(cleanPassword, 10);
+  const adminId = 'admin-' + Date.now();
+
+  if (supabase) {
+    try {
+      // 1. Mavjud admin yoki foydalanuvchini tekshirish
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id, ism')
+        .or(`telefon.eq.${cleanPhone},email.eq.${cleanLogin}`)
+        .maybeSingle();
+
+      if (existing) {
+        // Agar foydalanuvchi allaqachon mavjud bo'lsa, uni adminga yangilash
+        const { error: updErr } = await supabase
+          .from('users')
+          .update({
+            ism: cleanIsm,
+            telefon: cleanPhone,
+            email: cleanLogin.includes('@') ? cleanLogin : `${cleanLogin}@uybozor.admin`,
+            parol_hash: passHash,
+            is_admin: true,
+            is_blocked: false
+          })
+          .eq('id', existing.id);
+
+        if (updErr) {
+          return { success: false, error: 'Admin hisobini yangilashda xatolik: ' + updErr.message };
+        }
+        return { success: true };
+      }
+
+      // 2. Yangi admin qo'shish
+      const { error: insErr } = await supabase.from('users').insert([
+        {
+          id: adminId,
+          ism: cleanIsm,
+          telefon: cleanPhone,
+          email: cleanLogin.includes('@') ? cleanLogin : `${cleanLogin}@uybozor.admin`,
+          parol_hash: passHash,
+          is_admin: true,
+          is_blocked: false,
+          yaratilgan_sana: new Date().toISOString()
+        }
+      ]);
+
+      if (insErr) {
+        return { success: false, error: 'Bazaga saqlashda xatolik: ' + insErr.message };
+      }
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Server xatosi yuz berdi' };
+    }
+  }
+
+  // Supabase ulanmagan holat uchun zaxira (local fallback)
+  const localUsers = getStoredUsers();
+  const existingIdx = localUsers.findIndex(u => u.telefon === cleanPhone || u.email === cleanLogin);
+  if (existingIdx !== -1) {
+    localUsers[existingIdx].ism = cleanIsm;
+    localUsers[existingIdx].is_admin = true;
+    localUsers[existingIdx].parol = cleanPassword;
+    saveStoredUsers(localUsers);
+  } else {
+    localUsers.push({
+      id: adminId,
+      ism: cleanIsm,
+      telefon: cleanPhone,
+      email: cleanLogin,
+      parol: cleanPassword,
+      is_admin: true,
+      yaratilgan_sana: new Date().toISOString()
+    });
+    saveStoredUsers(localUsers);
+  }
+
+  return { success: true };
+};
+
+/**
+ * 3.2. Admin hisob ma'lumotlarini dinamik tekshirish (100% kodda ochiq kalitsiz)
  */
 export const verifyAdminCredentials = async (
   loginInput: string,
   passwordInput: string
-): Promise<{ success: boolean; error?: string }> => {
+): Promise<{ success: boolean; adminInfo?: { name: string; phone: string }; error?: string }> => {
   const cleanLogin = loginInput.trim().toLowerCase();
   const cleanPassword = passwordInput.trim();
 
@@ -130,72 +232,89 @@ export const verifyAdminCredentials = async (
     return { success: false, error: 'Login va parolni kiriting' };
   }
 
-  const VALID_ADMIN_LOGINS = ['uyborakmal', 'admin_arzonuy', 'admin', 'arzonuy'];
-  const VALID_ADMIN_PASSWORDS = ['ake080709', 'UyBozor#2026!AdminSecure', 'admin123', 'admin2026'];
-
-  const isLocalValid = VALID_ADMIN_LOGINS.includes(cleanLogin) && VALID_ADMIN_PASSWORDS.includes(cleanPassword);
-
   const supabase = getSupabase();
-  if (!supabase) {
-    if (isLocalValid) {
-      return { success: true };
-    }
-    return {
-      success: false,
-      error: 'Xato! Login yoki parol noto\'g\'ri kiritildi.'
-    };
-  }
 
-  try {
-    // 1. Supabase Edge Function orqali tekshirish (agar o'rnatilgan bo'lsa)
+  if (supabase) {
     try {
-      const { data: edgeData, error: edgeError } = await supabase.functions.invoke('admin-auth', {
-        body: { login: cleanLogin, password: cleanPassword }
-      });
-      if (!edgeError && edgeData) {
-        if (edgeData.success === true) {
-          return { success: true };
-        } else {
-          return { success: false, error: edgeData.error || 'Login yoki parol noto\'g\'ri kiritildi' };
+      // 1. Supabase users jadvalidan is_admin = true foydalanuvchini qidirish
+      const cleanDigits = cleanLogin.replace(/[^\d]/g, '');
+      let query = supabase.from('users').select('*').eq('is_admin', true);
+
+      if (cleanDigits.length >= 9) {
+        query = query.or(`telefon.eq.${cleanDigits},telefon.eq.+${cleanDigits},email.eq.${cleanLogin},ism.eq.${cleanLogin}`);
+      } else {
+        query = query.or(`telefon.eq.${cleanLogin},email.eq.${cleanLogin},ism.eq.${cleanLogin}`);
+      }
+
+      const { data: adminUsers, error } = await query;
+
+      if (!error && adminUsers && adminUsers.length > 0) {
+        for (const user of adminUsers) {
+          if (user.parol_hash) {
+            const isMatch = bcrypt.compareSync(cleanPassword, user.parol_hash);
+            if (isMatch) {
+              return {
+                success: true,
+                adminInfo: {
+                  name: user.ism || 'Bosh Administrator',
+                  phone: user.telefon || cleanLogin
+                }
+              };
+            }
+          }
         }
       }
-    } catch {
-      // Edge Function mavjud bo'lmasa, RPC tekshiruviga o'tadi
-    }
 
-    // 2. Supabase Server-side RPC funksiyasi (SECURITY DEFINER / pgcrypto bcrypt)
-    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_verify_credentials', {
-      p_login: cleanLogin,
-      p_password: cleanPassword
-    });
+      // 2. Edge function mavjud bo'lsa
+      try {
+        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('admin-auth', {
+          body: { login: cleanLogin, password: cleanPassword }
+        });
+        if (!edgeError && edgeData?.success) {
+          return {
+            success: true,
+            adminInfo: {
+              name: 'Bosh Administrator',
+              phone: cleanLogin
+            }
+          };
+        }
+      } catch {}
 
-    if (!rpcError) {
-      if (rpcData === true) {
-        return { success: true };
-      } else {
-        return { success: false, error: 'Login yoki parol noto\'g\'ri kiritildi' };
-      }
+    } catch (err: any) {
+      console.warn('[Admin Auth] Supabase xatosi:', err);
     }
-
-    // Agar RPC funksiya Supabase da hali o'rnatilmagan bo'lsa:
-    if (isLocalValid) {
-      return { success: true };
-    }
-
-    return {
-      success: false,
-      error: 'Xato! Login yoki parol noto\'g\'ri kiritildi.'
-    };
-  } catch (err: any) {
-    console.error('[Admin Auth] Tarmoq yoki server xatosi:', err);
-    if (isLocalValid) {
-      return { success: true };
-    }
-    return {
-      success: false,
-      error: 'Serverga ulanishda xatolik yuz berdi: ' + (err.message || 'Tarmoq xatosi')
-    };
   }
+
+  // 3. Local fallback (agar baza ulanmagan bo'lsa)
+  const localUsers = getStoredUsers();
+  const localAdmin = localUsers.find(
+    u =>
+      Boolean(u.is_admin) &&
+      (u.telefon.toLowerCase() === cleanLogin ||
+        u.email?.toLowerCase() === cleanLogin ||
+        u.ism.toLowerCase() === cleanLogin)
+  );
+
+  if (localAdmin) {
+    const isPassOk =
+      localAdmin.parol === cleanPassword ||
+      (localAdmin.parol && bcrypt.compareSync(cleanPassword, localAdmin.parol));
+    if (isPassOk) {
+      return {
+        success: true,
+        adminInfo: {
+          name: localAdmin.ism,
+          phone: localAdmin.telefon
+        }
+      };
+    }
+  }
+
+  return {
+    success: false,
+    error: 'Xato! Admin logini yoki parol noto\'g\'ri kiritildi.'
+  };
 };
 
 // 4. Barcha e'lonlarni olish (Admin uchun barcha statuslar, shu jumladan nobakor / o'chirilganlar)

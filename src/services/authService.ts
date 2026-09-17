@@ -168,7 +168,9 @@ export const loginUser = async (
   telefonYokiEmail: string,
   kiritilganParol?: string
 ): Promise<User> => {
-  const cleanInput = telefonYokiEmail.replace(/\s+/g, '').toLowerCase();
+  const rawInput = telefonYokiEmail.trim();
+  const digits = rawInput.replace(/[^\d]/g, '');
+  const cleanInput = rawInput.replace(/\s+/g, '').toLowerCase();
   const supabase = getSupabase();
 
   let foundUser: User | null = null;
@@ -176,12 +178,14 @@ export const loginUser = async (
 
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .or(`telefon.eq.${telefonYokiEmail},email.eq.${telefonYokiEmail}`)
-        .limit(1)
-        .single();
+      let query = supabase.from('users').select('*');
+      if (digits.length >= 9) {
+        query = query.or(`telefon.eq.${digits},telefon.eq.+${digits},telefon.eq.${cleanInput},email.eq.${cleanInput}`);
+      } else {
+        query = query.or(`telefon.eq.${cleanInput},email.eq.${cleanInput}`);
+      }
+
+      const { data, error } = await query.limit(1).maybeSingle();
 
       if (!error && data) {
         foundUser = {
@@ -205,9 +209,14 @@ export const loginUser = async (
   if (!foundUser) {
     const users = getStoredUsers();
     const localFound = users.find(
-      u =>
-        u.telefon.replace(/\s+/g, '').toLowerCase() === cleanInput ||
-        u.email?.toLowerCase() === cleanInput
+      u => {
+        const uDigits = u.telefon ? u.telefon.replace(/[^\d]/g, '') : '';
+        return (
+          (digits.length >= 9 && uDigits === digits) ||
+          u.telefon?.replace(/\s+/g, '').toLowerCase() === cleanInput ||
+          u.email?.toLowerCase() === cleanInput
+        );
+      }
     );
     if (localFound) {
       foundUser = localFound;
