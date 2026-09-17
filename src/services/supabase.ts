@@ -2,16 +2,16 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Vite environment o'zgaruvchilari
 const env = (import.meta as any).env || {};
-const SUPABASE_URL = env.VITE_SUPABASE_URL || 'https://vueidtzvefxkaxdfsiad.supabase.co';
-const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_X-uV8iJElbjAqsmyrUq7ww_60wy08bc';
+const SUPABASE_URL = env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY || '';
 
-// Xatoliklarni tekshirish va konsolga chiqarish
+// Xatoliklarni tekshirish va konsolga aniq chiqarish
 if (!SUPABASE_URL && !localStorage.getItem('supabase_url')) {
-  console.warn('VITE_SUPABASE_URL topilmadi, standart manzilga ulanmoqda.');
+  console.error('XATO: VITE_SUPABASE_URL topilmadi. Vercel yoki .env faylni tekshiring.');
 }
 
 if (!SUPABASE_ANON_KEY && !localStorage.getItem('supabase_anon_key')) {
-  console.warn('VITE_SUPABASE_ANON_KEY topilmadi, standart anon kalit ishlatilmoqda.');
+  console.error('XATO: VITE_SUPABASE_ANON_KEY topilmadi. Vercel yoki .env faylni tekshiring.');
 }
 
 const localUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_url') : null;
