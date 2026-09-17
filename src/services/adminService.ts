@@ -236,21 +236,27 @@ export const verifyAdminCredentials = async (
 
   if (supabase) {
     try {
-      // 1. Supabase users jadvalidan is_admin = true foydalanuvchini qidirish
-      const cleanDigits = cleanLogin.replace(/[^\d]/g, '');
-      let query = supabase.from('users').select('*').eq('is_admin', true);
-
-      if (cleanDigits.length >= 9) {
-        query = query.or(`telefon.eq.${cleanDigits},telefon.eq.+${cleanDigits},email.eq.${cleanLogin},ism.eq.${cleanLogin}`);
-      } else {
-        query = query.or(`telefon.eq.${cleanLogin},email.eq.${cleanLogin},ism.eq.${cleanLogin}`);
-      }
-
-      const { data: adminUsers, error } = await query;
+      // 1. Supabase users jadvalidan is_admin = true foydalanuvchilarni olish
+      const { data: adminUsers, error } = await supabase.from('users').select('*').eq('is_admin', true);
 
       if (!error && adminUsers && adminUsers.length > 0) {
+        const cleanPhoneDigits = cleanLogin.replace(/[^\d]/g, '');
+
         for (const user of adminUsers) {
-          if (user.parol_hash) {
+          const uPhoneDigits = (user.telefon || '').replace(/[^\d]/g, '');
+          const uEmail = (user.email || '').toLowerCase();
+          const uEmailPrefix = uEmail.split('@')[0];
+          const uName = (user.ism || '').toLowerCase();
+          const uPhone = (user.telefon || '').replace(/\s+/g, '').toLowerCase();
+
+          const isIdentifierMatch =
+            (cleanPhoneDigits.length >= 9 && uPhoneDigits === cleanPhoneDigits) ||
+            uPhone === cleanLogin ||
+            uEmail === cleanLogin ||
+            uEmailPrefix === cleanLogin ||
+            uName === cleanLogin;
+
+          if (isIdentifierMatch && user.parol_hash) {
             const isMatch = bcrypt.compareSync(cleanPassword, user.parol_hash);
             if (isMatch) {
               return {
@@ -288,12 +294,24 @@ export const verifyAdminCredentials = async (
 
   // 3. Local fallback (agar baza ulanmagan bo'lsa)
   const localUsers = getStoredUsers();
+  const cleanPhoneDigits = cleanLogin.replace(/[^\d]/g, '');
   const localAdmin = localUsers.find(
-    u =>
-      Boolean(u.is_admin) &&
-      (u.telefon.toLowerCase() === cleanLogin ||
-        u.email?.toLowerCase() === cleanLogin ||
-        u.ism.toLowerCase() === cleanLogin)
+    u => {
+      if (!u.is_admin) return false;
+      const uPhoneDigits = (u.telefon || '').replace(/[^\d]/g, '');
+      const uEmail = (u.email || '').toLowerCase();
+      const uEmailPrefix = uEmail.split('@')[0];
+      const uName = (u.ism || '').toLowerCase();
+      const uPhone = (u.telefon || '').replace(/\s+/g, '').toLowerCase();
+
+      return (
+        (cleanPhoneDigits.length >= 9 && uPhoneDigits === cleanPhoneDigits) ||
+        uPhone === cleanLogin ||
+        uEmail === cleanLogin ||
+        uEmailPrefix === cleanLogin ||
+        uName === cleanLogin
+      );
+    }
   );
 
   if (localAdmin) {
