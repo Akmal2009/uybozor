@@ -8,12 +8,12 @@ const env = (import.meta as any).env || {};
 
 export const TELEGRAM_CONFIG = {
   // 1. ADMIN BOT (Ruxsat so'rash boti: e'lon moderatsiyasi, 2FA admin kirish, tahrirlash so'rovi)
-  ADMIN_BOT_TOKEN: env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || env.VITE_TELEGRAM_BOT_TOKEN || '',
-  ADMIN_CHAT_ID: env.VITE_ADMIN_CHAT_ID || '',
+  ADMIN_BOT_TOKEN: env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || env.VITE_TELEGRAM_BOT_TOKEN || '8518990743:AAHFTvp4Qtku_v4St7SQLYj37dhtntgWOHY',
+  ADMIN_CHAT_ID: env.VITE_ADMIN_CHAT_ID || '8500341142',
   ADMIN_BOT_USERNAME: env.VITE_TELEGRAM_ADMIN_BOT_USERNAME || 'Uybozorinbot',
 
   // 2. USER BOT (Foydalanuvchi Kod Boti: faqat ro'yxatdan o'tish va parolni tiklash kodi uchun)
-  USER_BOT_TOKEN: env.VITE_TELEGRAM_USER_BOT_TOKEN || '',
+  USER_BOT_TOKEN: env.VITE_TELEGRAM_USER_BOT_TOKEN || '8612336657:AAGjtZo-tMbs3DIWS_hTWXH9j4eJwj4jExI',
   USER_BOT_USERNAME: env.VITE_TELEGRAM_USER_BOT_USERNAME || 'uybozorcodebot',
 
   // Orqaga moslik uchun
