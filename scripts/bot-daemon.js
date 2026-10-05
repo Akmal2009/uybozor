@@ -120,6 +120,27 @@ async function answerCallbackQuery(token, callbackQueryId, text, showAlert = fal
   });
 }
 
+// Bir martalik xavfsiz avtomatik kirish havolasini yaratish
+async function generateAuthLink(userId, phone) {
+  try {
+    const authToken = 'at_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 daqiqa amal qiladi
+
+    await supabase.from('otp_codes').upsert({
+      phone: 'token_' + authToken,
+      code: userId || phone,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString()
+    });
+
+    const cleanSiteUrl = SITE_URL.endsWith('/') ? SITE_URL : SITE_URL + '/';
+    return `${cleanSiteUrl}?auth_token=${authToken}`;
+  } catch (err) {
+    console.error('[Bot Daemon] generateAuthLink error:', err.message);
+    return SITE_URL;
+  }
+}
+
 // ============================================================================
 // 1. ADMIN BOT MODERATSIYA LOGIKASI (Callback Query va Ruxsatlar)
 // ============================================================================
@@ -191,6 +212,48 @@ async function handleAdminCallbackQuery(token, cb) {
         console.warn('[Admin Bot] editMessageText warning:', e.message);
       }
     }
+  }
+}
+
+async function handleAdminUpdate(token, update) {
+  if (update.callback_query) {
+    await handleAdminCallbackQuery(token, update.callback_query);
+    return;
+  }
+
+  if (update.message && update.message.chat) {
+    const msg = update.message;
+    const chatId = msg.chat.id.toString();
+    const text = (msg.text || '').trim();
+    const firstName = msg.from?.first_name || 'Admin';
+
+    console.log(`[Admin Bot] 💬 Message from ${chatId} (${firstName}): ${text}`);
+
+    const cleanSiteUrl = SITE_URL.endsWith('/') ? SITE_URL : SITE_URL + '/';
+
+    if (text.startsWith('/start') || text === '/admin') {
+      const welcomeMsg = `👑 <b>Assalomu alaykum, ${firstName}!</b>\n\n🏢 <b>"Uy Bozor" Admin Moderatsiya Boti</b>\n\nBu bot orqali:\n• 🏠 Yangi e'lonlarni tasdiqlash / rad etish\n• ⭐ VIP e'lon so'rovlarini qabul qilish\n• ✏️ Tahrirlash ruxsatlarini berish\n• 🔐 Admin panelga 2FA kirishni tasdiqlash\namalga oshiriladi.\n\n👇 <b>Admin paneliga kirish uchun tugmani bosing:</b>`;
+
+      await sendMessage(token, chatId, welcomeMsg, {
+        inline_keyboard: [
+          [{ text: "🔐 Admin Panelga kirish", url: `${cleanSiteUrl}admin` }],
+          [{ text: "🏠 Sayt bosh sahifasi", url: cleanSiteUrl }]
+        ]
+      });
+      return;
+    }
+
+    // Har qanday boshqa xabarga javob
+    await sendMessage(
+      token,
+      chatId,
+      `👑 <b>"Uy Bozor" Admin Boti</b> faol ishlamoqda. Yangi e'lonlar va so'rovlar kelganda darhol shu yerga yuboriladi.`,
+      {
+        inline_keyboard: [
+          [{ text: "🔐 Admin Panelga kirish", url: `${cleanSiteUrl}admin` }]
+        ]
+      }
+    );
   }
 }
 
@@ -404,13 +467,14 @@ async function handleUserUpdate(token, update) {
             try {
               await supabase.from('bot_reg_sessions').delete().eq('chat_id', chatId);
             } catch {}
+            const autoLoginUrl = await generateAuthLink(existingUser.id, cleanPhone);
             await sendMessage(
               token,
               chatId,
-              `⚠️ <b>+${cleanPhone}</b> raqami allaqachon ro'yxatdan o'tgan!\n\nSaytga kirishingiz yoki parolni tiklashingiz mumkin:`,
+              `⚠️ <b>+${cleanPhone}</b> raqami allaqachon ro'yxatdan o'tgan!\n\n👇 Saytga parolsiz, to'g'ridan-to'g'ri kirish uchun pastdagi tugmani bosing:`,
               {
                 remove_keyboard: true,
-                inline_keyboard: [[{ text: "🌐 Saytga o'tish", url: SITE_URL }]]
+                inline_keyboard: [[{ text: "🚀 Saytga avtomatik kirish", url: autoLoginUrl }]]
               }
             );
             return;
@@ -486,10 +550,11 @@ async function handleUserUpdate(token, update) {
         console.log(`[User Bot] ✅ Successfully registered user: ${session.name} (+${session.phone})`);
         sessions.delete(chatId);
 
-        const successMsg = `🎉 <b>Tabriklaymiz, ${session.name}!</b>\n\nSiz "Uy Bozor" tizimida muvaffaqiyatli ro'yxatdan o'tdingiz!\n\n📱 <b>Telefoningiz:</b> <code>+${session.phone}</code>\n🔑 <b>Parolingiz:</b> <i>(o'rnatildi)</i>\n\nEndi saytga bemalol kirib, e'lonlar joylashtirishingiz va tizimdan to'liq foydalanishingiz mumkin!`;
+        const autoLoginUrl = await generateAuthLink(userId, session.phone);
+        const successMsg = `🎉 <b>Tabriklaymiz, ${session.name}!</b>\n\nSiz "Uy Bozor" tizimida muvaffaqiyatli ro'yxatdan o'tdingiz!\n\n📱 <b>Telefoningiz:</b> <code>+${session.phone}</code>\n🔑 <b>Parolingiz:</b> <i>(saqlandi)</i>\n\n👇 <b>Quyidagi tugmani bosing — saytga login-parolsiz, avtomatik kirasiz:</b>`;
 
         await sendMessage(token, chatId, successMsg, {
-          inline_keyboard: [[{ text: "🏠 Saytga kirish", url: SITE_URL }]]
+          inline_keyboard: [[{ text: "🚀 Saytga avtomatik kirish", url: autoLoginUrl }]]
         });
         return;
       }
@@ -536,8 +601,19 @@ async function handleUserUpdate(token, update) {
 // ============================================================================
 // 3. POLLING BO'TQUVCHI DASTUR (ADMIN & USER BOTS)
 // ============================================================================
-function startPollingBot(token, botLabel, updateHandler) {
+async function startPollingBot(token, botLabel, updateHandler) {
   let offset = 0;
+
+  // Agar botda avval webhook o'rnatilgan bo'lsa, getUpdates 409 Conflict beradi.
+  // Pollingdan oldin webhookni avtomatik tozalaymiz:
+  try {
+    const delRes = await tgRequest(token, 'deleteWebhook', { drop_pending_updates: true });
+    if (delRes && delRes.ok) {
+      console.log(`[${botLabel}] 🔄 Webhook tozalandi va Polling rejimiga o'tildi.`);
+    }
+  } catch (err) {
+    console.warn(`[${botLabel}] deleteWebhook ogohlantirishi:`, err.message);
+  }
 
   async function poll() {
     try {
@@ -548,6 +624,10 @@ function startPollingBot(token, botLabel, updateHandler) {
 
       if (data && !data.ok) {
         console.warn(`[${botLabel}] Telegram API error:`, data.error_code, data.description);
+        if (data.error_code === 409) {
+          console.log(`[${botLabel}] ⚠️ 409 Conflict aniqlandi. Webhook to'liq o'chirilmoqda...`);
+          await tgRequest(token, 'deleteWebhook', { drop_pending_updates: true });
+        }
       }
 
       if (data && data.ok && data.result && data.result.length > 0) {
@@ -573,14 +653,10 @@ if (ADMIN_BOT_TOKEN && USER_BOT_TOKEN && ADMIN_BOT_TOKEN === USER_BOT_TOKEN) {
   console.log('[Bot Daemon] 🤖 Yagona bot rejimida ishga tushirildi (Admin + User)...');
   startPollingBot(ADMIN_BOT_TOKEN, 'Unified Bot', handleUserUpdate);
 } else {
-  // 1. Admin Boti (moderatsiya uchun)
+  // 1. Admin Boti (moderatsiya va /start xabarlari uchun)
   if (ADMIN_BOT_TOKEN) {
     console.log('[Bot Daemon] 👑 Admin Bot boshqaruvi ishga tushirildi...');
-    startPollingBot(ADMIN_BOT_TOKEN, 'Admin Bot', async (token, update) => {
-      if (update.callback_query) {
-        await handleAdminCallbackQuery(token, update.callback_query);
-      }
-    });
+    startPollingBot(ADMIN_BOT_TOKEN, 'Admin Bot', handleAdminUpdate);
   }
 
   // 2. Foydalanuvchi Boti (ro'yxatdan o'tish va kodlar uchun)

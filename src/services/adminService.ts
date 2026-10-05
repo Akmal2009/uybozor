@@ -236,25 +236,61 @@ export const verifyAdminCredentials = async (
 
   if (supabase) {
     try {
-      // 1. Supabase users jadvalidan is_admin = true foydalanuvchilarni olish
-      const { data: adminUsers, error } = await supabase.from('users').select('*').eq('is_admin', true);
+      // 1. Supabase PostgreSQL RPC orqali serverda xavfsiz tekshirish (SECURITY DEFINER)
+      try {
+        const { data: rpcSuccess, error: rpcErr } = await supabase.rpc('admin_verify_credentials', {
+          p_login: cleanLogin,
+          p_password: cleanPassword
+        });
+        if (!rpcErr && rpcSuccess === true) {
+          return {
+            success: true,
+            adminInfo: {
+              name: 'Bosh Administrator',
+              phone: cleanLogin
+            }
+          };
+        }
+      } catch (rpcEx) {}
+
+      // 2. Supabase Edge Function orqali tekshirish
+      try {
+        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('admin-auth', {
+          body: { login: cleanLogin, password: cleanPassword }
+        });
+        if (!edgeError && edgeData?.success) {
+          return {
+            success: true,
+            adminInfo: {
+              name: 'Bosh Administrator',
+              phone: cleanLogin
+            }
+          };
+        }
+      } catch {}
+
+      // 3. Bazadagi users jadvalidan aniq admin foydalanuvchini tekshirish
+      const cleanPhoneDigits = cleanLogin.replace(/[^\d]/g, '');
+      let query = supabase.from('users').select('*').eq('is_admin', true);
+      if (cleanPhoneDigits.length >= 9) {
+        query = query.or(`telefon.eq.${cleanPhoneDigits},email.eq.${cleanLogin}`);
+      } else {
+        query = query.eq('email', cleanLogin);
+      }
+      const { data: adminUsers, error } = await query.limit(5);
 
       if (!error && adminUsers && adminUsers.length > 0) {
-        const cleanPhoneDigits = cleanLogin.replace(/[^\d]/g, '');
-
         for (const user of adminUsers) {
           const uPhoneDigits = (user.telefon || '').replace(/[^\d]/g, '');
           const uEmail = (user.email || '').toLowerCase();
           const uEmailPrefix = uEmail.split('@')[0];
-          const uName = (user.ism || '').toLowerCase();
           const uPhone = (user.telefon || '').replace(/\s+/g, '').toLowerCase();
 
           const isIdentifierMatch =
             (cleanPhoneDigits.length >= 9 && uPhoneDigits === cleanPhoneDigits) ||
             uPhone === cleanLogin ||
             uEmail === cleanLogin ||
-            uEmailPrefix === cleanLogin ||
-            uName === cleanLogin;
+            uEmailPrefix === cleanLogin;
 
           if (isIdentifierMatch && user.parol_hash) {
             const isMatch = bcrypt.compareSync(cleanPassword, user.parol_hash);
@@ -270,22 +306,6 @@ export const verifyAdminCredentials = async (
           }
         }
       }
-
-      // 2. Edge function mavjud bo'lsa
-      try {
-        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('admin-auth', {
-          body: { login: cleanLogin, password: cleanPassword }
-        });
-        if (!edgeError && edgeData?.success) {
-          return {
-            success: true,
-            adminInfo: {
-              name: 'Bosh Administrator',
-              phone: cleanLogin
-            }
-          };
-        }
-      } catch {}
 
     } catch (err: any) {
       console.warn('[Admin Auth] Supabase xatosi:', err);

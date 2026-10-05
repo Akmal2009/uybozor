@@ -167,37 +167,55 @@ export const CreateListingPage: React.FC = () => {
 
 
 
-  // Edit rejimini tekshirish
+  // Edit rejimini tekshirish (Qat'iy xavfsizlik va ruxsat tekshiruvi bilan)
   useEffect(() => {
     if (editId) {
       setIsEditMode(true);
       fetchListingById(editId).then(item => {
-        if (item) {
-          setTuri(item.turi);
-          if (item.viloyat) setViloyat(item.viloyat);
-          if (item.tuman) setTuman(item.tuman);
-          if (item.mahalla) setMahalla(item.mahalla);
-          setLat(item.manzil_lat);
-          setLng(item.manzil_lng);
-          setXonalarSoni(item.xonalar_soni);
-          setMaydon(item.maydon);
-          setQavat(item.qavat);
-          setUmumiyQavat(item.umumiy_qavat);
-          setNarx(item.narx);
-          setValyuta(item.valyuta);
-          setTelefon(item.telefon);
-          setIzoh(item.izoh || '');
-          if (item.rasmlar && item.rasmlar.length > 0) {
-            setRasmlar(item.rasmlar);
-          }
-          if (item.tamiri) setTamiri(item.tamiri);
-          if (item.bino_turi) setBinoTuri(item.bino_turi);
-          if (item.mebel !== undefined) setMebel(item.mebel);
-          if (item.texnika !== undefined) setTexnika(item.texnika);
+        if (!item) {
+          alert("E'lon topilmadi yoki o'chirilgan");
+          navigate('/');
+          return;
         }
+
+        // 1. Faqat e'lon egasi yoki admin tahrirlashi mumkin
+        if (user && item.user_id !== user.id && !user.is_admin) {
+          alert("Sizda ushbu e'lonni tahrirlash huquqi yo'q!");
+          navigate('/');
+          return;
+        }
+
+        // 2. Oddiy foydalanuvchi faqat can_edit = true bo'lganda tahrirlay oladi
+        if (user && !user.is_admin && !item.can_edit) {
+          alert("Ushbu e'lonni tahrirlash uchun avval administrator tasdig'ini olishingiz kerak!");
+          navigate('/my-listings');
+          return;
+        }
+
+        setTuri(item.turi);
+        if (item.viloyat) setViloyat(item.viloyat);
+        if (item.tuman) setTuman(item.tuman);
+        if (item.mahalla) setMahalla(item.mahalla);
+        setLat(item.manzil_lat);
+        setLng(item.manzil_lng);
+        setXonalarSoni(item.xonalar_soni);
+        setMaydon(item.maydon);
+        setQavat(item.qavat);
+        setUmumiyQavat(item.umumiy_qavat);
+        setNarx(item.narx);
+        setValyuta(item.valyuta);
+        setTelefon(item.telefon);
+        setIzoh(item.izoh || '');
+        if (item.rasmlar && item.rasmlar.length > 0) {
+          setRasmlar(item.rasmlar);
+        }
+        if (item.tamiri) setTamiri(item.tamiri);
+        if (item.bino_turi) setBinoTuri(item.bino_turi);
+        if (item.mebel !== undefined) setMebel(item.mebel);
+        if (item.texnika !== undefined) setTexnika(item.texnika);
       });
     }
-  }, [editId]);
+  }, [editId, user, navigate]);
 
   useEffect(() => {
     if (user && (!telefon || telefon === '+998 ')) {

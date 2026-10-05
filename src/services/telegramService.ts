@@ -382,7 +382,7 @@ export const sendTelegramOtpCode = async (
   }
 
   const messageText = `
-🔐 <b>"Arzon Uy" Tasdiqlash Kodi</b>
+🔐 <b>"Uy Bozor" Tasdiqlash Kodi</b>
 
 👤 <b>Foydalanuvchi:</b> ${name || 'Foydalanuvchi'}
 📱 <b>Telefon raqam:</b> <code>${phone}</code>
@@ -408,21 +408,7 @@ export const sendTelegramOtpCode = async (
     } catch (err: any) {}
   }
 
-  // 2. Ro'yxatdan o'tishda kod darhol Telegram botga ham yetib borishi shart!
-  if (!targetChatId || targetChatId !== TELEGRAM_CONFIG.ADMIN_CHAT_ID) {
-    try {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: TELEGRAM_CONFIG.ADMIN_CHAT_ID,
-          text: messageText,
-          parse_mode: 'HTML'
-        })
-      });
-    } catch (err: any) {}
-  }
-
+  // 2. Kod faqat maqsadli foydalanuvchiga yuboriladi (Adminga boshqalarning kodi bormaydi)
   return { success: true, code };
 };
 

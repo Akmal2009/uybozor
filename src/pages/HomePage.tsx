@@ -71,6 +71,9 @@ export const HomePage: React.FC = () => {
   }, [filters]);
 
   const vipListings = listings.filter(l => l.is_vip);
+  // Agar tepada alohida VIP blok ko'rsatilsa, pastki umumiy ro'yxatda takrorlanmasligi uchun filtrlaymiz
+  const showVipSection = vipListings.length > 0 && filters.searchQuery === '';
+  const displayListings = showVipSection ? listings.filter(l => !l.is_vip) : listings;
 
   return (
     <div className="min-h-screen">
@@ -210,7 +213,7 @@ export const HomePage: React.FC = () => {
           </Suspense>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {listings.map((item, idx) => (
+            {displayListings.map((item, idx) => (
               <ListingCard
                 key={item.id}
                 listing={item}

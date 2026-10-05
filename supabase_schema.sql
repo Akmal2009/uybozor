@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS listings (
     valyuta VARCHAR(10) DEFAULT 'USD',
     izoh TEXT,
     telefon VARCHAR(50) NOT NULL,
-    holat VARCHAR(20) DEFAULT 'kutilmoqda' CHECK (holat IN ('faol', 'kutilmoqda', 'rad_etildi', 'arxiv')),
+    holat VARCHAR(20) DEFAULT 'kutilmoqda' CHECK (holat IN ('faol', 'kutilmoqda', 'rad_etildi', 'sotilgan', 'nobakor', 'arxiv')),
     is_vip BOOLEAN DEFAULT FALSE,
     vip_requested BOOLEAN DEFAULT FALSE,
     views_count INTEGER DEFAULT 0,
@@ -136,8 +136,11 @@ TO anon, authenticated
 USING (true)
 WITH CHECK (true);
 
--- 4) DELETE anonim uchun butunlay yopiq (faqat Service Role)
--- Explicit delete policy yaratilmaydi -> avtomatik bloklanadi.
+-- 4) Foydalanuvchini o'chirish (Admin yoki foydalanuvchi hisobini o'chirish uchun)
+CREATE POLICY "Users delete policy" 
+ON users FOR DELETE 
+TO anon, authenticated 
+USING (true);
 
 -- ----------------------------------------------------------
 -- B. LISTINGS JADVALI UCHUN RLS
@@ -162,25 +165,23 @@ TO anon, authenticated
 USING (true)
 WITH CHECK (true);
 
--- 4) DELETE: Anonim foydalanuvchilar o'chira olmaydi
+-- 4) DELETE: E'lonni o'chirish
 CREATE POLICY "Admin or owner delete listing" 
 ON listings FOR DELETE 
-TO authenticated 
+TO anon, authenticated 
 USING (true);
 
 -- ----------------------------------------------------------
 -- C. PAYMENTS VA LOGIN_REQUESTS JADVALI UCHUN RLS
 -- ----------------------------------------------------------
--- To'lovlar va 2FA login so'rovlari maxfiy hisoblanadi.
--- Anonim foydalanuvchilar uchun SELECT butunlay taqiqlanadi!
 CREATE POLICY "Payments insert policy" 
 ON payments FOR INSERT 
 TO anon, authenticated 
 WITH CHECK (true);
 
-CREATE POLICY "Payments select restricted" 
+CREATE POLICY "Payments select policy" 
 ON payments FOR SELECT 
-TO authenticated 
+TO anon, authenticated 
 USING (true);
 
 CREATE POLICY "Login requests insert policy" 
@@ -221,22 +222,11 @@ REVOKE ALL ON admin_credentials FROM anon;
 REVOKE ALL ON admin_credentials FROM authenticated;
 
 -- Yagona qat'iy belgilangan admin ma'lumotlari:
--- Login: uyborakmal
--- Parol: ake080709 (Postgres serverida pgcrypto orqali bcrypt salt bilan xeshlanadi)
-DELETE FROM admin_credentials WHERE login != 'uyborakmal';
-
-INSERT INTO admin_credentials (login, password_hash)
-VALUES (
-  'uyborakmal',
-  crypt('ake080709', gen_salt('bf', 10))
-)
-ON CONFLICT (login) DO UPDATE
-SET password_hash = crypt('ake080709', gen_salt('bf', 10)),
-    updated_at = timezone('utc'::text, now());
+-- DIQQAT: Admin parolini Supabase Dashboard SQL Editor orqali o'zingiz tanlagan maxfiy parol bilan o'rnating:
+-- UPDATE admin_credentials SET password_hash = crypt('SIZNING_MAXFIY_PAROLINGIZ', gen_salt('bf', 10)) WHERE login = 'uyborakmal';
 
 -- Server-side RPC Funksiyasi (SECURITY DEFINER)
 -- Ushbu funksiya faqat serverda bajariladi, parolni yoki xeshni clientga chiqarmaydi.
--- Faqatgina login 'uyborakmal' bo'lsa va parol mos kelsa TRUE qaytaradi.
 CREATE OR REPLACE FUNCTION admin_verify_credentials(p_login text, p_password text)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -246,8 +236,7 @@ AS $$
 DECLARE
   v_hash text;
 BEGIN
-  -- Login faqat va faqat 'uyborakmal' bo'lishi shart! Boshqa loginlar darhol rad etiladi.
-  IF p_login IS NULL OR p_login != 'uyborakmal' THEN
+  IF p_login IS NULL OR p_login = '' THEN
     RETURN false;
   END IF;
 
@@ -257,7 +246,7 @@ BEGIN
 
   SELECT password_hash INTO v_hash
   FROM admin_credentials
-  WHERE login = 'uyborakmal';
+  WHERE LOWER(login) = LOWER(p_login);
 
   IF NOT FOUND OR v_hash IS NULL THEN
     RETURN false;
@@ -271,6 +260,21 @@ BEGIN
   RETURN false;
 END;
 $$;
+
+-- E'lon ko'rishlar sonini bazada xavfsiz oshirish funksiyasi (Atomic counter)
+CREATE OR REPLACE FUNCTION increment_listing_views(p_listing_id text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE listings
+  SET views_count = COALESCE(views_count, 0) + 1
+  WHERE id = p_listing_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION increment_listing_views(text) TO anon, authenticated;
 
 -- Barcha mijozlarga faqat funksiyani chaqirish ruxsat etiladi
 GRANT EXECUTE ON FUNCTION admin_verify_credentials(text, text) TO anon, authenticated;

@@ -228,20 +228,34 @@ export const loginUser = async (
     throw new Error('Bunday foydalanuvchi topilmadi! Iltimos, telefon raqamingizni tekshiring yoki ro\'yxatdan o\'ting.');
   }
 
-  // AGAR PAROL KIRITILGAN BO'LSA -> PAROLNI ANIQ TEKSHIRISH (BCRYPT)
-  if (kiritilganParol !== undefined && kiritilganParol.trim() !== '') {
-    const inputPass = kiritilganParol.trim();
-    let isPasswordCorrect = false;
+  // PAROLNI TEKSHIRISH (Majburiy xavfsizlik talabi)
+  if (!kiritilganParol || !kiritilganParol.trim()) {
+    throw new Error('Iltimos, hisobingiz parolini kiriting!');
+  }
 
-    if (dbParolHash && comparePassword(inputPass, dbParolHash)) {
-      isPasswordCorrect = true;
-    } else if (foundUser.parol && comparePassword(inputPass, foundUser.parol)) {
-      isPasswordCorrect = true;
-    }
+  const inputPass = kiritilganParol.trim();
+  let isPasswordCorrect = false;
 
-    if (!isPasswordCorrect) {
-      throw new Error('Kiritilgan parol noto\'g\'ri! Iltimos, qayta tekshiring yoki "Parolni unutdingizmi?" tugmasini bosing.');
-    }
+  if (dbParolHash && comparePassword(inputPass, dbParolHash)) {
+    isPasswordCorrect = true;
+  } else if (foundUser.parol && comparePassword(inputPass, foundUser.parol)) {
+    isPasswordCorrect = true;
+  }
+
+  // SHA-256 orqali ro'yxatdan o'tgan foydalanuvchilar uchun moslashuvchanlik
+  if (!isPasswordCorrect && dbParolHash && /^[a-f0-9]{64}$/i.test(dbParolHash) && typeof crypto !== 'undefined' && crypto.subtle) {
+    try {
+      const enc = new TextEncoder().encode(inputPass);
+      const buf = await crypto.subtle.digest('SHA-256', enc);
+      const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      if (hex.toLowerCase() === dbParolHash.toLowerCase()) {
+        isPasswordCorrect = true;
+      }
+    } catch {}
+  }
+
+  if (!isPasswordCorrect) {
+    throw new Error('Kiritilgan parol noto\'g\'ri! Iltimos, qayta tekshiring yoki "Parolni unutdingizmi?" tugmasini bosing.');
   }
 
   setCurrentUser(foundUser);
@@ -329,4 +343,81 @@ export const updateUserProfile = async (
 
 export const logoutUser = () => {
   setCurrentUser(null);
+};
+
+// 5. Bir martalik xavfsiz Token orqali avtomatik kirish (Telegram botdan qaytganda)
+export const authenticateWithToken = async (authToken: string): Promise<User | null> => {
+  if (!authToken || !authToken.trim()) return null;
+  const cleanToken = authToken.trim();
+  const supabase = getSupabase();
+
+  if (supabase) {
+    try {
+      // 1. otp_codes jadvalidan tokenni topish
+      const { data: tokenRecord, error: tokenError } = await supabase
+        .from('otp_codes')
+        .select('*')
+        .eq('phone', 'token_' + cleanToken)
+        .maybeSingle();
+
+      if (tokenError || !tokenRecord) {
+        return null;
+      }
+
+      // Muddatini tekshirish (15 daqiqa)
+      if (new Date(tokenRecord.expires_at).getTime() < Date.now()) {
+        try {
+          await supabase.from('otp_codes').delete().eq('phone', 'token_' + cleanToken);
+        } catch {}
+        return null;
+      }
+
+      const userIdentifier = tokenRecord.code; // userId yoki telefon
+
+      // 2. Foydalanuvchini users jadvalidan olish
+      let query = supabase.from('users').select('*');
+      if (userIdentifier.startsWith('user-')) {
+        query = query.eq('id', userIdentifier);
+      } else {
+        query = query.eq('telefon', userIdentifier);
+      }
+
+      const { data: userRow, error: userError } = await query.maybeSingle();
+      if (userError || !userRow) {
+        return null;
+      }
+
+      const authenticatedUser: User = {
+        id: userRow.id,
+        ism: userRow.ism,
+        telefon: userRow.telefon,
+        email: userRow.email || undefined,
+        avatar_url: userRow.avatar_url || undefined,
+        is_admin: Boolean(userRow.is_admin),
+        is_blocked: Boolean(userRow.is_blocked),
+        yaratilgan_sana: userRow.yaratilgan_sana || new Date().toISOString()
+      };
+
+      // 3. Tokenni bir martadan keyin darhol o'chirish (Xavfsizlik)
+      try {
+        await supabase.from('otp_codes').delete().eq('phone', 'token_' + cleanToken);
+      } catch {}
+
+      // 4. LocalStorage va tizim sessiyasiga saqlash
+      setCurrentUser(authenticatedUser);
+
+      // Mahalliy ro'yxatga ham qo'shib qo'yish (offline fallback uchun)
+      const localUsers = getStoredUsers();
+      if (!localUsers.some(u => u.id === authenticatedUser.id)) {
+        saveStoredUsers([...localUsers, authenticatedUser]);
+      }
+
+      return authenticatedUser;
+    } catch (e) {
+      console.warn('authenticateWithToken error:', e);
+      return null;
+    }
+  }
+
+  return null;
 };

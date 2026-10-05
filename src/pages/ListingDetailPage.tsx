@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Listing } from '../types';
 import { fetchListingById, fetchListings, incrementViewCount, updateListing } from '../services/listingService';
-import { requestVipPermission } from '../services/telegramService';
+import { requestVipPermission, requestEditPermission } from '../services/telegramService';
 import { getOptimizedImageUrl } from '../services/imageUtils';
 import { useFavorites } from '../context/FavoritesContext';
 import { useAuth } from '../context/AuthContext';
@@ -54,6 +54,8 @@ export const ListingDetailPage: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [vipLoading, setVipLoading] = useState(false);
   const [vipRequestedLocal, setVipRequestedLocal] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editRequestedLocal, setEditRequestedLocal] = useState(false);
 
   // Ipoteka kalkulyatori hisoblari
   const [initialPaymentPercent, setInitialPaymentPercent] = useState(25);
@@ -145,6 +147,22 @@ export const ListingDetailPage: React.FC = () => {
     }
   };
 
+  const handleRequestEdit = async () => {
+    if (!listing || listing.can_edit || listing.edit_requested || editRequestedLocal) return;
+    setEditLoading(true);
+    try {
+      await requestEditPermission(listing.id);
+      await updateListing(listing.id, { edit_requested: true });
+      setEditRequestedLocal(true);
+      setListing(prev => (prev ? { ...prev, edit_requested: true } : null));
+      alert('✏️ Tahrirlash ruxsati so\'rovi adminga yuborildi! Admin tasdiqlashi bilan e\'lonni tahrirlashingiz mumkin.');
+    } catch {
+      alert('Tahrirlash so\'rovi yuborishda xatolik yuz berdi');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Yuqori navigatsiya */}
@@ -179,14 +197,35 @@ export const ListingDetailPage: React.FC = () => {
             </div>
           )}
 
+          {/* E'lon egasi uchun Tahrirlash: Faqat ruxsat bo'lsa yoki admin bo'lsa tahrirlash ochiladi */}
           {isOwner && (
-            <Link
-              to={`/create-listing?edit=${listing.id}`}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold transition-colors"
-            >
-              <Edit3 className="w-4 h-4 text-brand-600" />
-              Tahrirlash
-            </Link>
+            <div>
+              {listing.can_edit || user?.is_admin ? (
+                <Link
+                  to={`/create-listing?edit=${listing.id}`}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-colors shadow-sm"
+                >
+                  <Edit3 className="w-4 h-4 text-emerald-600" />
+                  Tahrirlash
+                </Link>
+              ) : listing.edit_requested || editRequestedLocal ? (
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gray-100 text-gray-700 border border-gray-200 rounded-xl text-xs font-bold shadow-sm">
+                  <Clock className="w-3.5 h-3.5 text-gray-500 animate-spin" />
+                  Tahrirlash so'rovi kutilmoqda
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={editLoading}
+                  onClick={handleRequestEdit}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold transition-colors shadow-sm disabled:opacity-50"
+                  title="E'lonni tahrirlash uchun adminga ruxsat so'rovi yuborish"
+                >
+                  <Edit3 className="w-4 h-4 text-brand-600" />
+                  {editLoading ? 'Yuborilmoqda...' : 'Tahrirlash so\'rovi'}
+                </button>
+              )}
+            </div>
           )}
 
           <button

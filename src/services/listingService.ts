@@ -334,8 +334,23 @@ export const deleteListing = async (id: string): Promise<boolean> => {
   return true;
 };
 
-// Ko'rishlar sonini oshirish
+// Ko'rishlar sonini oshirish (Supabase bazasida va LocalStorage keshida)
 export const incrementViewCount = async (id: string) => {
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { error } = await supabase.rpc('increment_listing_views', { p_listing_id: id });
+      if (error) {
+        const { data: item } = await supabase.from('listings').select('views_count').eq('id', id).maybeSingle();
+        if (item) {
+          await supabase.from('listings').update({ views_count: (item.views_count || 0) + 1 }).eq('id', id);
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+  }
+
   const listings = getStoredListings();
   const index = listings.findIndex(item => item.id === id);
   if (index !== -1) {

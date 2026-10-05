@@ -239,13 +239,7 @@ export const AuthModal: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => {
-                switchMode('register');
-                const botUser = TELEGRAM_CONFIG.USER_BOT_USERNAME || 'uybozorcodebot';
-                try {
-                  window.open(`https://t.me/${botUser.replace('@', '')}?start=register`, '_blank');
-                } catch {}
-              }}
+              onClick={() => switchMode('register')}
               className={`flex-1 py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
                 mode === 'register' ? 'bg-[#0088cc] text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'
               }`}

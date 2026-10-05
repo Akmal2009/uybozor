@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
-import { getCurrentUser, loginUser, logoutUser, registerUser } from '../services/authService';
+import { getCurrentUser, loginUser, logoutUser, registerUser, authenticateWithToken } from '../services/authService';
 
 interface AuthContextType {
   user: User | null;
@@ -20,10 +20,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   useEffect(() => {
-    const active = getCurrentUser();
-    if (active) {
-      setUser(active);
-    }
+    const initAuth = async () => {
+      // 1. URL parametridan 'auth_token' ni tekshirish (Telegram bot orqali avtomatik kirish)
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const authToken = urlParams.get('auth_token');
+        if (authToken && authToken.trim()) {
+          const loggedUser = await authenticateWithToken(authToken.trim());
+          if (loggedUser) {
+            setUser(loggedUser);
+            // URL tozalash (?auth_token olib tashlanadi, sahifa qayta yuklanmaydi)
+            const cleanUrl = window.location.pathname + (window.location.hash || '');
+            window.history.replaceState({}, document.title, cleanUrl);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Auto-login from token error:', e);
+      }
+
+      // 2. Mavjud saqlangan sessiyani yuklash
+      const active = getCurrentUser();
+      if (active) {
+        setUser(active);
+      }
+    };
+
+    initAuth();
   }, []);
 
   const login = async (phoneOrEmail: string, password?: string) => {

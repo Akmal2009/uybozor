@@ -3,6 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
+import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_USER_BOT_TOKEN") || "";
 const SITE_URL = Deno.env.get("SITE_URL") || "https://www.uybozor.store/";
@@ -62,12 +63,16 @@ async function answerCallbackQuery(callbackQueryId: string, text?: string) {
   }
 }
 
-// Oddiy parolni xeshlash (Base64 / SHA-256 fallback)
+// Parolni xavfsiz xeshlash (Bcrypt standart / SHA-256 fallback)
 async function hashPassword(password: string): Promise<string> {
-  const data = new TextEncoder().encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  try {
+    return await bcrypt.hash(password);
+  } catch {
+    const data = new TextEncoder().encode(password);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
 }
 
 serve(async (req) => {
@@ -306,7 +311,8 @@ serve(async (req) => {
               ism: session.name,
               telefon: session.phone,
               parol_hash: passHash,
-              rol: "foydalanuvchi",
+              is_admin: false,
+              is_blocked: false,
               yaratilgan_sana: new Date().toISOString(),
             },
           ]);
