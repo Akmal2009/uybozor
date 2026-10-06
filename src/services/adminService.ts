@@ -1,534 +1,358 @@
 import { Listing, User, Payment, LoginRequest } from '../types';
 import { getSupabase } from './supabase';
-import { getStoredListings, saveStoredListings, deleteListing, updateListing } from './listingService';
-import { getStoredUsers, saveStoredUsers, hashPassword } from './authService';
-import { getStoredPayments } from './paymentService';
-import bcrypt from 'bcryptjs';
+import { sanitizePhone, isValidEmail } from './authService';
 
-const LOGIN_REQUESTS_KEY = 'uybozor_login_requests';
+// ==============================================================================
+// 1. ADMIN 2FA LOGIN SO'ROVLARI (SERVER-SIDE EDGE FUNCTION ORQALI)
+// ==============================================================================
 
-// Local storage dan login so'rovlarini olish
-export const getStoredLoginRequests = (): LoginRequest[] => {
-  const data = localStorage.getItem(LOGIN_REQUESTS_KEY);
-  if (!data) return [];
-  try {
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
-};
-
-export const saveStoredLoginRequests = (requests: LoginRequest[]) => {
-  localStorage.setItem(LOGIN_REQUESTS_KEY, JSON.stringify(requests));
-};
-
-// 1. Yangi login so'rovini yaratish
+/**
+ * Yangi 2FA login so'rovini yaratish
+ */
 export const createLoginRequest = async (
   userId: string,
   userName: string,
   userPhone: string
 ): Promise<LoginRequest> => {
-  const requestId = 'req-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
-  const newRequest: LoginRequest = {
-    id: requestId,
+  const supabase = getSupabase();
+  const fallbackId = 'req-' + Date.now();
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-auth', {
+        body: {
+          action: 'create_2fa',
+          userId,
+          userName,
+          userPhone
+        }
+      });
+
+      if (!error && data?.success) {
+        return {
+          id: data.id,
+          status: 'kutilmoqda',
+          user_id: userId,
+          user_name: userName,
+          user_phone: userPhone,
+          created_at: new Date().toISOString()
+        };
+      }
+    } catch (e) {
+      console.warn('[adminService] createLoginRequest invoke error:', e);
+    }
+  }
+
+  return {
+    id: fallbackId,
     status: 'kutilmoqda',
     user_id: userId,
     user_name: userName,
     user_phone: userPhone,
     created_at: new Date().toISOString()
   };
-
-  const supabase = getSupabase();
-  if (supabase) {
-    try {
-      await supabase.from('login_requests').insert([
-        {
-          id: newRequest.id,
-          status: 'kutilmoqda',
-          user_id: userId,
-          user_name: userName,
-          user_phone: userPhone
-        }
-      ]);
-    } catch (e) {
-      console.warn('[Admin Service] Supabase login_requests insert error:', e);
-    }
-  }
-
-  const list = getStoredLoginRequests();
-  list.unshift(newRequest);
-  saveStoredLoginRequests(list);
-
-  return newRequest;
 };
 
-// 2. Login so'rovi holatini tekshirish
+/**
+ * 2FA login so'rovi holatini tekshirish
+ */
 export const checkLoginRequestStatus = async (
   requestId: string
 ): Promise<'kutilmoqda' | 'tasdiqlangan' | 'rad_etilgan'> => {
   const supabase = getSupabase();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('login_requests')
-        .select('status')
-        .eq('id', requestId)
-        .single();
+  if (!supabase) return 'kutilmoqda';
 
-      if (!error && data) {
-        return data.status as any;
+  try {
+    const { data, error } = await supabase.functions.invoke('admin-auth', {
+      body: {
+        action: 'check_2fa',
+        requestId
       }
-    } catch (e) {
-      // fallback
-    }
-  }
-
-  const list = getStoredLoginRequests();
-  const req = list.find(r => r.id === requestId);
-  return req ? req.status : 'kutilmoqda';
-};
-
-// 3. Admin login so'rovini tasdiqlash yoki rad etish
-export const updateLoginRequestStatus = async (
-  requestId: string,
-  status: 'tasdiqlangan' | 'rad_etilgan'
-): Promise<boolean> => {
-  const supabase = getSupabase();
-  if (supabase) {
-    try {
-      await supabase
-        .from('login_requests')
-        .update({ status })
-        .eq('id', requestId);
-    } catch (e) {
-      console.warn('[Admin Service] Supabase update login request error:', e);
-    }
-  }
-
-  const list = getStoredLoginRequests();
-  const index = list.findIndex(r => r.id === requestId);
-  if (index !== -1) {
-    list[index].status = status;
-    saveStoredLoginRequests(list);
-  }
-
-  return true;
-};
-
-/**
- * 3.1. Admin hisobini ro'yxatdan o'tkazish (Supabase bazasiga xavfsiz bcrypt hesh bilan)
- */
-export const registerAdminUser = async (
-  ism: string,
-  login: string,
-  telefon: string,
-  parol: string
-): Promise<{ success: boolean; error?: string }> => {
-  const cleanIsm = ism.trim();
-  const cleanLogin = login.trim().toLowerCase();
-  const cleanPhone = telefon.trim().replace(/\s+/g, '');
-  const cleanPassword = parol.trim();
-
-  if (!cleanIsm || !cleanLogin || !cleanPhone || !cleanPassword) {
-    return { success: false, error: 'Barcha maydonlarni to\'ldiring' };
-  }
-
-  if (cleanPassword.length < 6) {
-    return { success: false, error: 'Parol kamida 6 ta belgidan iborat bo\'lishi kerak' };
-  }
-
-  const supabase = getSupabase();
-  const passHash = bcrypt.hashSync(cleanPassword, 10);
-  const adminId = 'admin-' + Date.now();
-
-  if (supabase) {
-    try {
-      // 1. Mavjud admin yoki foydalanuvchini tekshirish
-      const { data: existing } = await supabase
-        .from('users')
-        .select('id, ism')
-        .or(`telefon.eq.${cleanPhone},email.eq.${cleanLogin}`)
-        .maybeSingle();
-
-      if (existing) {
-        // Agar foydalanuvchi allaqachon mavjud bo'lsa, uni adminga yangilash
-        const { error: updErr } = await supabase
-          .from('users')
-          .update({
-            ism: cleanIsm,
-            telefon: cleanPhone,
-            email: cleanLogin.includes('@') ? cleanLogin : `${cleanLogin}@uybozor.admin`,
-            parol_hash: passHash,
-            is_admin: true,
-            is_blocked: false
-          })
-          .eq('id', existing.id);
-
-        if (updErr) {
-          return { success: false, error: 'Admin hisobini yangilashda xatolik: ' + updErr.message };
-        }
-        return { success: true };
-      }
-
-      // 2. Yangi admin qo'shish
-      const { error: insErr } = await supabase.from('users').insert([
-        {
-          id: adminId,
-          ism: cleanIsm,
-          telefon: cleanPhone,
-          email: cleanLogin.includes('@') ? cleanLogin : `${cleanLogin}@uybozor.admin`,
-          parol_hash: passHash,
-          is_admin: true,
-          is_blocked: false,
-          yaratilgan_sana: new Date().toISOString()
-        }
-      ]);
-
-      if (insErr) {
-        return { success: false, error: 'Bazaga saqlashda xatolik: ' + insErr.message };
-      }
-
-      return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e.message || 'Server xatosi yuz berdi' };
-    }
-  }
-
-  // Supabase ulanmagan holat uchun zaxira (local fallback)
-  const localUsers = getStoredUsers();
-  const existingIdx = localUsers.findIndex(u => u.telefon === cleanPhone || u.email === cleanLogin);
-  if (existingIdx !== -1) {
-    localUsers[existingIdx].ism = cleanIsm;
-    localUsers[existingIdx].is_admin = true;
-    localUsers[existingIdx].parol = cleanPassword;
-    saveStoredUsers(localUsers);
-  } else {
-    localUsers.push({
-      id: adminId,
-      ism: cleanIsm,
-      telefon: cleanPhone,
-      email: cleanLogin,
-      parol: cleanPassword,
-      is_admin: true,
-      yaratilgan_sana: new Date().toISOString()
     });
-    saveStoredUsers(localUsers);
+
+    if (!error && data?.success) {
+      return data.status || 'kutilmoqda';
+    }
+  } catch (e) {
+    console.warn('[adminService] checkLoginRequestStatus error:', e);
   }
 
-  return { success: true };
+  return 'kutilmoqda';
 };
 
 /**
- * 3.2. Admin hisob ma'lumotlarini dinamik tekshirish (100% kodda ochiq kalitsiz)
+ * 2. Admin hisob ma'lumotlarini serverda xavfsiz tekshirish
+ * DIQQAT: Hech qanday hardcoded parol yoki MASTER_ADMIN_HASH qolmadi!
+ * Tekshiruv 100% server-side Edge Function / PostgreSQL RPC orqali o'tadi.
  */
 export const verifyAdminCredentials = async (
   loginInput: string,
   passwordInput: string
 ): Promise<{ success: boolean; adminInfo?: { name: string; phone: string }; error?: string }> => {
-  const cleanLogin = loginInput.trim().toLowerCase();
-  const cleanPassword = passwordInput.trim();
+  const cleanLogin = (loginInput || '').trim().toLowerCase();
+  const cleanPassword = (passwordInput || '').trim();
 
   if (!cleanLogin || !cleanPassword) {
     return { success: false, error: 'Login va parolni kiriting' };
   }
 
-  // 0. Bosh Administrator xeshini xavfsiz tekshirish (Supabase RPC vaqtinchalik ishlamaganda ham 100% kafolat)
-  const MASTER_ADMIN_HASH = '$2b$10$/h4rehub61Pbq94sl8TCQO7/oTUifOsrHxPUpAlqsf.mKjoT7wbo.';
-  if (cleanLogin === 'uyborakmal') {
-    try {
-      if (bcrypt.compareSync(cleanPassword, MASTER_ADMIN_HASH)) {
-        return {
-          success: true,
-          adminInfo: {
-            name: 'Bosh Administrator',
-            phone: cleanLogin
-          }
-        };
-      }
-    } catch {}
-  }
-
   const supabase = getSupabase();
-
-  if (supabase) {
-    try {
-      // 1. Supabase PostgreSQL RPC orqali serverda xavfsiz tekshirish (SECURITY DEFINER)
-      try {
-        const { data: rpcSuccess, error: rpcErr } = await supabase.rpc('admin_verify_credentials', {
-          p_login: cleanLogin,
-          p_password: cleanPassword
-        });
-        if (!rpcErr && rpcSuccess === true) {
-          return {
-            success: true,
-            adminInfo: {
-              name: 'Bosh Administrator',
-              phone: cleanLogin
-            }
-          };
-        }
-      } catch (rpcEx) {}
-
-      // 2. Supabase Edge Function orqali tekshirish
-      try {
-        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('admin-auth', {
-          body: { login: cleanLogin, password: cleanPassword }
-        });
-        if (!edgeError && edgeData?.success) {
-          return {
-            success: true,
-            adminInfo: {
-              name: 'Bosh Administrator',
-              phone: cleanLogin
-            }
-          };
-        }
-      } catch {}
-
-      // 3. Bazadagi users jadvalidan aniq admin foydalanuvchini tekshirish
-      const cleanPhoneDigits = cleanLogin.replace(/[^\d]/g, '');
-      let query = supabase.from('users').select('*').eq('is_admin', true);
-      if (cleanPhoneDigits.length >= 9) {
-        query = query.or(`telefon.eq.${cleanPhoneDigits},email.eq.${cleanLogin}`);
-      } else {
-        query = query.eq('email', cleanLogin);
-      }
-      const { data: adminUsers, error } = await query.limit(5);
-
-      if (!error && adminUsers && adminUsers.length > 0) {
-        for (const user of adminUsers) {
-          const uPhoneDigits = (user.telefon || '').replace(/[^\d]/g, '');
-          const uEmail = (user.email || '').toLowerCase();
-          const uEmailPrefix = uEmail.split('@')[0];
-          const uPhone = (user.telefon || '').replace(/\s+/g, '').toLowerCase();
-
-          const isIdentifierMatch =
-            (cleanPhoneDigits.length >= 9 && uPhoneDigits === cleanPhoneDigits) ||
-            uPhone === cleanLogin ||
-            uEmail === cleanLogin ||
-            uEmailPrefix === cleanLogin;
-
-          if (isIdentifierMatch && user.parol_hash) {
-            const isMatch = bcrypt.compareSync(cleanPassword, user.parol_hash);
-            if (isMatch) {
-              return {
-                success: true,
-                adminInfo: {
-                  name: user.ism || 'Bosh Administrator',
-                  phone: user.telefon || cleanLogin
-                }
-              };
-            }
-          }
-        }
-      }
-
-    } catch (err: any) {
-      console.warn('[Admin Auth] Supabase xatosi:', err);
-    }
+  if (!supabase) {
+    return { success: false, error: 'Supabase xizmatiga ulanib bo\'lmadi' };
   }
 
-  // 3. Local fallback (agar baza ulanmagan bo'lsa)
-  const localUsers = getStoredUsers();
-  const cleanPhoneDigits = cleanLogin.replace(/[^\d]/g, '');
-  const localAdmin = localUsers.find(
-    u => {
-      if (!u.is_admin) return false;
-      const uPhoneDigits = (u.telefon || '').replace(/[^\d]/g, '');
-      const uEmail = (u.email || '').toLowerCase();
-      const uEmailPrefix = uEmail.split('@')[0];
-      const uName = (u.ism || '').toLowerCase();
-      const uPhone = (u.telefon || '').replace(/\s+/g, '').toLowerCase();
+  try {
+    // 1. Supabase Edge Function orqali xavfsiz tekshirish
+    const { data, error } = await supabase.functions.invoke('admin-auth', {
+      body: {
+        action: 'verify',
+        login: cleanLogin,
+        password: cleanPassword
+      }
+    });
 
-      return (
-        (cleanPhoneDigits.length >= 9 && uPhoneDigits === cleanPhoneDigits) ||
-        uPhone === cleanLogin ||
-        uEmail === cleanLogin ||
-        uEmailPrefix === cleanLogin ||
-        uName === cleanLogin
-      );
+    if (error) {
+      return { success: false, error: error.message || 'Kirishni tekshirishda xatolik yuz berdi' };
     }
-  );
 
-  if (localAdmin) {
-    const isPassOk =
-      localAdmin.parol === cleanPassword ||
-      (localAdmin.parol && bcrypt.compareSync(cleanPassword, localAdmin.parol));
-    if (isPassOk) {
+    if (data && data.success) {
       return {
         success: true,
-        adminInfo: {
-          name: localAdmin.ism,
-          phone: localAdmin.telefon
+        adminInfo: data.adminInfo || {
+          name: 'Administrator',
+          phone: cleanLogin
         }
       };
     }
-  }
 
-  return {
-    success: false,
-    error: 'Xato! Admin logini yoki parol noto\'g\'ri kiritildi.'
-  };
+    return {
+      success: false,
+      error: data?.error || 'Xato! Login yoki parol noto\'g\'ri kiritildi.'
+    };
+  } catch (err: any) {
+    console.error('[adminService] verifyAdminCredentials error:', err);
+    return { success: false, error: err.message || 'Server bilan ulanishda xatolik yuz berdi' };
+  }
 };
 
-// 4. Barcha e'lonlarni olish (Admin uchun barcha statuslar, shu jumladan nobakor / o'chirilganlar)
+/**
+ * 3. Barcha e'lonlarni olish (Admin moderatsiyasi uchun)
+ */
 export const fetchAllAdminListings = async (): Promise<Listing[]> => {
   const supabase = getSupabase();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('listings')
-        .select('*')
-        .order('yaratilgan_sana', { ascending: false });
+  if (!supabase) return [];
 
-      if (!error && data && data.length > 0) {
-        return data as Listing[];
-      }
-    } catch (e) {
-      console.warn('Supabase fetchAllAdminListings error:', e);
-    }
+  const { data, error } = await supabase
+    .from('listings')
+    .select('*')
+    .order('yaratilgan_sana', { ascending: false });
+
+  if (error) {
+    console.error('[adminService] fetchAllAdminListings error:', error);
+    throw new Error(`E'lonlarni yuklashda xatolik: ${error.message}`);
   }
 
-  return getStoredListings();
+  return (data || []) as Listing[];
 };
 
-// 5. Barcha foydalanuvchilarni olish (parollarsiz, xavfsiz)
+/**
+ * 4. Barcha foydalanuvchilarni olish (parollarsiz, xavfsiz)
+ */
 export const fetchAllAdminUsers = async (): Promise<Array<User & { listings_count?: number }>> => {
   const supabase = getSupabase();
-  let users: User[] = [];
+  if (!supabase) return [];
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .order('yaratilgan_sana', { ascending: false });
+  // Avval profiles jadvalini tekshiramiz
+  let usersData: any[] = [];
+  const { data: profiles, error: pError } = await supabase
+    .from('profiles')
+    .select('id, ism, telefon, email, avatar_url, is_admin, is_blocked, yaratilgan_sana')
+    .order('yaratilgan_sana', { ascending: false });
 
-      if (!error && data) {
-        users = data.map((u: any) => ({
-          id: u.id,
-          ism: u.ism,
-          telefon: u.telefon,
-          email: u.email,
-          parol: undefined,
-          avatar_url: u.avatar_url,
-          is_admin: u.is_admin,
-          is_blocked: u.is_blocked,
-          yaratilgan_sana: u.yaratilgan_sana
-        }));
+  if (!pError && profiles) {
+    usersData = profiles;
+  } else {
+    // Agar profiles hali to'liq yaratilmagan bo'lsa, users jadvalidan
+    const { data: users, error: uError } = await supabase
+      .from('users')
+      .select('id, ism, telefon, email, avatar_url, is_admin, is_blocked, yaratilgan_sana')
+      .order('yaratilgan_sana', { ascending: false });
+
+    if (uError) {
+      console.error('[adminService] fetchAllAdminUsers error:', uError);
+      throw new Error(`Foydalanuvchilarni yuklashda xatolik: ${uError.message}`);
+    }
+    usersData = users || [];
+  }
+
+  // E'lonlar sonini hisoblash
+  const { data: listings } = await supabase.from('listings').select('id, user_id');
+  const countsMap = new Map<string, number>();
+
+  if (listings) {
+    for (const l of listings) {
+      if (l.user_id) {
+        countsMap.set(l.user_id, (countsMap.get(l.user_id) || 0) + 1);
       }
-    } catch (e) {
-      console.warn('Supabase fetchAllAdminUsers error:', e);
     }
   }
 
-  if (users.length === 0) {
-    users = getStoredUsers();
-  }
-
-  const listings = await fetchAllAdminListings();
-
-  return users.map(u => ({
-    ...u,
-    parol: undefined,
-    listings_count: listings.filter(l => l.user_id === u.id).length
+  return usersData.map(u => ({
+    id: u.id,
+    ism: u.ism,
+    telefon: u.telefon,
+    email: u.email,
+    avatar_url: u.avatar_url,
+    is_admin: Boolean(u.is_admin),
+    is_blocked: Boolean(u.is_blocked),
+    yaratilgan_sana: u.yaratilgan_sana,
+    listings_count: countsMap.get(u.id) || 0
   }));
 };
 
-// 6. Admin tomonidan foydalanuvchi ma'lumotlarini to'g'ridan-to'g'ri tahrirlash (Bcrypt xeshlash bilan)
-export const updateAdminUser = async (userId: string, data: Partial<User>): Promise<boolean> => {
+/**
+ * 5. Foydalanuvchini bloklash / blokdan chiqarish
+ */
+export const toggleUserBlock = async (userId: string, isBlocked: boolean): Promise<boolean> => {
   const supabase = getSupabase();
-  const passHash = data.parol && data.parol.trim() ? hashPassword(data.parol.trim()) : undefined;
+  if (!supabase) throw new Error('Supabase ulanishi mavjud emas');
 
-  if (supabase) {
-    try {
-      const updatePayload: Record<string, any> = {
-        ism: data.ism,
-        telefon: data.telefon,
-        email: data.email,
-        is_admin: data.is_admin,
-        is_blocked: data.is_blocked
-      };
-      if (passHash) {
-        updatePayload.parol_hash = passHash;
-      }
+  const { error: pErr } = await supabase
+    .from('profiles')
+    .update({ is_blocked: isBlocked })
+    .eq('id', userId);
 
-      await supabase
-        .from('users')
-        .update(updatePayload)
-        .eq('id', userId);
-    } catch (e) {
-      console.warn('Supabase updateAdminUser error:', e);
-    }
-  }
+  // Zaxira uchun users jadvalini ham yangilash
+  await supabase
+    .from('users')
+    .update({ is_blocked: isBlocked })
+    .eq('id', userId);
 
-  const users = getStoredUsers();
-  const index = users.findIndex(u => u.id === userId);
-  if (index !== -1) {
-    users[index] = {
-      ...users[index],
-      ...data,
-      parol: undefined
-    };
-    localStorage.setItem('uybozor_users', JSON.stringify(users));
+  if (pErr) {
+    throw new Error(`Foydalanuvchi holatini yangilab bo'lmadi: ${pErr.message}`);
   }
 
   return true;
 };
 
-// 7. Admin tomonidan foydalanuvchini o'chirish
+/**
+ * 6. Foydalanuvchiga adminlik berish / olish
+ */
+export const toggleUserAdmin = async (userId: string, isAdmin: boolean): Promise<boolean> => {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase ulanishi mavjud emas');
+
+  const { error: pErr } = await supabase
+    .from('profiles')
+    .update({ is_admin: isAdmin })
+    .eq('id', userId);
+
+  await supabase
+    .from('users')
+    .update({ is_admin: isAdmin })
+    .eq('id', userId);
+
+  if (pErr) {
+    throw new Error(`Admin huquqini yangilab bo'lmadi: ${pErr.message}`);
+  }
+
+  return true;
+};
+
+/**
+ * 6.1. Foydalanuvchi ma'lumotlarini tahrirlash (Admin panel orqali)
+ */
+export const updateAdminUser = async (
+  userId: string,
+  data: {
+    ism?: string;
+    telefon?: string;
+    email?: string;
+    parol?: string;
+    is_admin?: boolean;
+    is_blocked?: boolean;
+  }
+): Promise<boolean> => {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase ulanishi mavjud emas');
+
+  const profileUpdate: Record<string, any> = {};
+  if (data.ism !== undefined) profileUpdate.ism = data.ism;
+  if (data.telefon !== undefined) profileUpdate.telefon = sanitizePhone(data.telefon);
+  if (data.email !== undefined) profileUpdate.email = data.email.trim();
+  if (data.is_admin !== undefined) profileUpdate.is_admin = data.is_admin;
+  if (data.is_blocked !== undefined) profileUpdate.is_blocked = data.is_blocked;
+
+  const { error: pErr } = await supabase
+    .from('profiles')
+    .update(profileUpdate)
+    .eq('id', userId);
+
+  // Zaxira uchun users jadvalini ham sinxronlash
+  const userUpdate: Record<string, any> = { ...profileUpdate };
+  if (data.parol) {
+    userUpdate.parol = data.parol;
+  }
+
+  await supabase
+    .from('users')
+    .update(userUpdate)
+    .eq('id', userId);
+
+  if (pErr) {
+    console.warn('[adminService] updateAdminUser profile update notice:', pErr);
+  }
+
+  return true;
+};
+
+/**
+ * 6.2. Foydalanuvchini o'chirish (Admin panel orqali)
+ */
 export const deleteAdminUser = async (userId: string): Promise<boolean> => {
   const supabase = getSupabase();
-  if (supabase) {
-    try {
-      await supabase
-        .from('users')
-        .delete()
-        .eq('id', userId);
-    } catch (e) {
-      console.warn('Supabase deleteAdminUser error:', e);
-    }
-  }
+  if (!supabase) throw new Error('Supabase ulanishi mavjud emas');
 
-  const users = getStoredUsers();
-  const filtered = users.filter(u => u.id !== userId);
-  localStorage.setItem('uybozor_users', JSON.stringify(filtered));
+  const { error: pErr } = await supabase
+    .from('profiles')
+    .delete()
+    .eq('id', userId);
+
+  await supabase
+    .from('users')
+    .delete()
+    .eq('id', userId);
+
+  if (pErr) {
+    console.warn('[adminService] deleteAdminUser error:', pErr);
+  }
 
   return true;
 };
 
-// 8. Barcha to'lovlarni olish
+/**
+ * 7. Barcha to'lovlarni olish
+ */
 export const fetchAllAdminPayments = async (): Promise<Payment[]> => {
   const supabase = getSupabase();
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('payments')
-        .select('*')
-        .order('sana', { ascending: false });
+  if (!supabase) return [];
 
-      if (!error && data) {
-        return data as Payment[];
-      }
-    } catch (e) {
-      console.warn('Supabase fetchAllAdminPayments error:', e);
-    }
+  const { data, error } = await supabase
+    .from('payments')
+    .select('*')
+    .order('sana', { ascending: false });
+
+  if (error) {
+    console.error('[adminService] fetchAllAdminPayments error:', error);
+    throw new Error(`To'lovlarni yuklashda xatolik: ${error.message}`);
   }
 
-  return getStoredPayments();
+  return (data || []) as Payment[];
 };
 
-// 9. Foydalanuvchini bloklash / blokdan chiqarish
-export const toggleUserBlock = async (userId: string, isBlocked: boolean): Promise<boolean> => {
-  return updateAdminUser(userId, { is_blocked: isBlocked });
-};
-
-// 10. Foydalanuvchiga adminlik berish / olish
-export const toggleUserAdmin = async (userId: string, isAdmin: boolean): Promise<boolean> => {
-  return updateAdminUser(userId, { is_admin: isAdmin });
-};
-
-// 11. Admin statistikasini hisoblash
+/**
+ * 8. Admin statistikasini hisoblash
+ */
 export const fetchAdminStats = async () => {
   const listings = await fetchAllAdminListings();
   const users = await fetchAllAdminUsers();
@@ -543,7 +367,6 @@ export const fetchAdminStats = async () => {
 
   const totalUsers = users.length;
   const blockedUsers = users.filter(u => u.is_blocked).length;
-
   const editRequests = listings.filter(l => l.edit_requested && !l.can_edit);
 
   return {

@@ -1,422 +1,367 @@
 import { User } from '../types';
-import { INITIAL_USERS } from './mockData';
 import { getSupabase } from './supabase';
-import bcrypt from 'bcryptjs';
 
 /**
- * Parolni xavfsiz hashlash (bcrypt)
+ * Telefon raqamini Supabase Auth uchun xavfsiz email aliasiga o'tkazish
+ * Sababi: O'zbekistonda SMS provayderlariga (Twilio) qimmat to'lov qilmasdan,
+ * Telegram bot orqali OTP tekshirilib, Supabase Auth ning barcha xavfsizlik
+ * imkoniyatlari (JWT, sessiya, RLS auth.uid()) 100% to'liq ishlaydi.
  */
-export const hashPassword = (password: string): string => {
-  return bcrypt.hashSync(password, 10);
+export const phoneToAuthEmail = (phone: string): string => {
+  const digits = phone.replace(/[^\d]/g, '');
+  return `${digits}@phone.uybozor.uz`;
 };
 
 /**
- * Parolni tekshirish (bcrypt yoki legacy base64 orqali)
+ * Telefon va email kiritishlarini Query Injection xavfidan himoyalash va normallashtirish
  */
-export const comparePassword = (password: string, hashOrEncoded: string): boolean => {
-  if (!hashOrEncoded) return false;
-
-  // 1. Agar bcrypt hash ($2a$, $2b$, $2y$) bo'lsa
-  if (hashOrEncoded.startsWith('$2a$') || hashOrEncoded.startsWith('$2b$') || hashOrEncoded.startsWith('$2y$')) {
-    try {
-      return bcrypt.compareSync(password, hashOrEncoded);
-    } catch {
-      return false;
-    }
-  }
-
-  // 2. Eski tizim (btoa / base64) bilan moslashuvchanlik
-  try {
-    if (atob(hashOrEncoded) === password) {
-      return true;
-    }
-  } catch {}
-
-  // 3. To'g'ridan-to'g'ri solishtirish (agar test baza ochiq matnda qolgan bo'lsa)
-  return hashOrEncoded === password;
+export const sanitizePhone = (phone: string): string => {
+  return phone.replace(/[^\d]/g, '');
 };
 
-const USERS_STORAGE_KEY = 'uybozor_users';
-const CURRENT_USER_KEY = 'uybozor_current_user';
-
-// Boshlang'ich foydalanuvchilarni yuklash
-export const getStoredUsers = (): User[] => {
-  const data = localStorage.getItem(USERS_STORAGE_KEY);
-  if (!data) {
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(INITIAL_USERS));
-    return INITIAL_USERS;
-  }
-  try {
-    return JSON.parse(data);
-  } catch {
-    return INITIAL_USERS;
-  }
+export const isValidEmail = (email: string): boolean => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 };
 
-export const saveStoredUsers = (users: User[]) => {
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-};
-
-export const getCurrentUser = (): User | null => {
-  const data = localStorage.getItem(CURRENT_USER_KEY);
-  if (!data) return null;
-  try {
-    return JSON.parse(data);
-  } catch {
-    return null;
-  }
-};
-
-export const setCurrentUser = (user: User | null) => {
-  if (user) {
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(CURRENT_USER_KEY);
-  }
-};
-
-// 1. Yangi foydalanuvchini ro'yxatdan o'tkazish
+/**
+ * 1. Yangi foydalanuvchini Supabase Auth orqali ro'yxatdan o'tkazish
+ */
 export const registerUser = async (
   ism: string,
   telefon: string,
   email?: string,
   parol?: string
 ): Promise<User> => {
-  const cleanPhone = telefon.replace(/\s+/g, '');
-  const userPassword = parol || '123456';
+  const cleanName = ism.trim();
+  const cleanPhone = sanitizePhone(telefon);
+  const userPassword = (parol || '').trim();
 
-  // Oldin ro'yxatdan o'tganligini tekshirish
-  const localUsers = getStoredUsers();
-  const alreadyExists = localUsers.some(
-    u => u.telefon.replace(/\s+/g, '') === cleanPhone
-  );
+  // Validatsiyalar
+  if (!cleanName || cleanName.length < 2) {
+    throw new Error('Iltimos, to\'liq ismingizni kiriting (kamida 2 ta belgi).');
+  }
 
-  if (alreadyExists) {
-    throw new Error('Ushbu telefon raqam bilan allaqachon ro\'yxatdan o\'tilgan! Iltimos, Login va Parolingiz orqali kiring.');
+  if (!cleanPhone || cleanPhone.length < 9) {
+    throw new Error('Iltimos, to\'g\'ri telefon raqam kiriting.');
+  }
+
+  // Parol minimal uzunligi (8+ belgi talabi)
+  if (!userPassword || userPassword.length < 8) {
+    throw new Error('Parol kamida 8 ta belgidan iborat bo\'lishi shart!');
   }
 
   const supabase = getSupabase();
-  if (supabase) {
-    try {
-      // Supabase'da mavjudligini tekshirish
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('id')
-        .eq('telefon', telefon)
-        .single();
+  if (!supabase) {
+    throw new Error('Supabase xizmati bilan aloqa yo\'q. Iltimos, internetni tekshiring.');
+  }
 
-      if (existingUser) {
-        throw new Error('Ushbu telefon raqam allaqachon ro\'yxatdan o\'tgan! Iltimos, login qiling.');
-      }
+  const authEmail = email && isValidEmail(email) ? email.trim().toLowerCase() : phoneToAuthEmail(cleanPhone);
+  const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(cleanName)}`;
 
-      const { data, error } = await supabase
-        .from('users')
-        .insert([
-          {
-            ism,
-            telefon,
-            email: email || null,
-            parol_hash: hashPassword(userPassword),
-            avatar_url: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(ism)}`
-          }
-        ])
-        .select()
-        .single();
-
-      if (!error && data) {
-        const newUser: User = {
-          id: data.id,
-          ism: data.ism,
-          telefon: data.telefon,
-          email: data.email,
-          parol: userPassword,
-          avatar_url: data.avatar_url,
-          yaratilgan_sana: data.yaratilgan_sana
-        };
-        const users = getStoredUsers();
-        users.push(newUser);
-        saveStoredUsers(users);
-        setCurrentUser(newUser);
-        return newUser;
+  // Supabase Auth orqali ro'yxatdan o'tkazish
+  const { data: authData, error: authError } = await supabase.auth.signUp({
+    email: authEmail,
+    password: userPassword,
+    options: {
+      data: {
+        ism: cleanName,
+        telefon: cleanPhone,
+        avatar_url: avatarUrl
       }
-    } catch (e: any) {
-      if (e.message && e.message.includes('allaqachon')) {
-        throw e;
-      }
-      console.warn('Supabase register fallback to local:', e);
     }
+  });
+
+  if (authError) {
+    if (authError.message.includes('already registered') || authError.message.includes('User already registered')) {
+      throw new Error('Ushbu telefon raqam bilan allaqachon ro\'yxatdan o\'tilgan! Iltimos, tizimga kiring.');
+    }
+    throw new Error(`Ro'yxatdan o'tishda xatolik: ${authError.message}`);
+  }
+
+  if (!authData.user) {
+    throw new Error('Foydalanuvchi hisobi yaratilmadi.');
   }
 
   const newUser: User = {
-    id: 'usr-' + Date.now(),
-    ism,
-    telefon,
-    email: email || '',
-    parol: userPassword,
-    avatar_url: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(ism)}`,
-    yaratilgan_sana: new Date().toISOString()
+    id: authData.user.id,
+    ism: cleanName,
+    telefon: cleanPhone,
+    email: email || undefined,
+    avatar_url: avatarUrl,
+    is_admin: false,
+    is_blocked: false,
+    yaratilgan_sana: authData.user.created_at || new Date().toISOString()
   };
 
-  localUsers.push(newUser);
-  saveStoredUsers(localUsers);
-  setCurrentUser(newUser);
   return newUser;
 };
 
-// 2. Aniq Login va Parol bilan tizimga kirish (Tahminiy hisob yaratilmaydi!)
+/**
+ * 2. Supabase Auth orqali tizimga kirish (Login)
+ */
 export const loginUser = async (
   telefonYokiEmail: string,
   kiritilganParol?: string
 ): Promise<User> => {
-  const rawInput = telefonYokiEmail.trim();
-  const digits = rawInput.replace(/[^\d]/g, '');
-  const cleanInput = rawInput.replace(/\s+/g, '').toLowerCase();
+  const rawInput = (telefonYokiEmail || '').trim();
+  const password = (kiritilganParol || '').trim();
+
+  if (!rawInput) {
+    throw new Error('Telefon raqamingiz yoki emailingizni kiriting!');
+  }
+
+  if (!password) {
+    throw new Error('Iltimos, parolingizni kiriting!');
+  }
+
   const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error('Supabase xizmati bilan aloqa yo\'q.');
+  }
 
-  let foundUser: User | null = null;
-  let dbParolHash: string | null = null;
+  const digits = sanitizePhone(rawInput);
+  let authEmail = '';
 
-  if (supabase) {
-    try {
-      let query = supabase.from('users').select('*');
-      if (digits.length >= 9) {
-        query = query.or(`telefon.eq.${digits},telefon.eq.+${digits},telefon.eq.${cleanInput},email.eq.${cleanInput}`);
-      } else {
-        query = query.or(`telefon.eq.${cleanInput},email.eq.${cleanInput}`);
-      }
+  if (isValidEmail(rawInput)) {
+    authEmail = rawInput.toLowerCase();
+  } else if (digits.length >= 9) {
+    authEmail = phoneToAuthEmail(digits);
+  } else {
+    throw new Error('To\'g\'ri telefon raqam yoki email kiriting!');
+  }
 
-      const { data, error } = await query.limit(1).maybeSingle();
+  // Supabase Auth orqali autentifikatsiya
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    email: authEmail,
+    password: password
+  });
 
-      if (!error && data) {
-        foundUser = {
-          id: data.id,
-          ism: data.ism,
-          telefon: data.telefon,
-          email: data.email,
-          parol: undefined, // Parol hech qachon client ob'ektida ochiq saqlanmaydi
-          avatar_url: data.avatar_url,
-          is_admin: data.is_admin,
-          is_blocked: data.is_blocked,
-          yaratilgan_sana: data.yaratilgan_sana
-        };
-        dbParolHash = data.parol_hash;
-      }
-    } catch (e) {
-      // local fallback
+  if (authError) {
+    // Agar foydalanuvchi topilmasa yoki parol noto'g'ri bo'lsa
+    if (authError.message.includes('Invalid login credentials')) {
+      throw new Error('Telefon raqam yoki parol noto\'g\'ri kiritildi!');
     }
+    throw new Error(authError.message);
   }
 
-  if (!foundUser) {
-    const users = getStoredUsers();
-    const localFound = users.find(
-      u => {
-        const uDigits = u.telefon ? u.telefon.replace(/[^\d]/g, '') : '';
-        return (
-          (digits.length >= 9 && uDigits === digits) ||
-          u.telefon?.replace(/\s+/g, '').toLowerCase() === cleanInput ||
-          u.email?.toLowerCase() === cleanInput
-        );
-      }
-    );
-    if (localFound) {
-      foundUser = localFound;
-    }
+  if (!authData.user) {
+    throw new Error('Foydalanuvchi ma\'lumotlarini yuklab bo\'lmadi.');
   }
 
-  // AGAR FOYDALANUVCHI TOPILMASA -> XATOLIK QAYTARILADI (Tahminiy yangi profil OCHILMAYDI!)
-  if (!foundUser) {
-    throw new Error('Bunday foydalanuvchi topilmadi! Iltimos, telefon raqamingizni tekshiring yoki ro\'yxatdan o\'ting.');
+  // Profil ma'lumotlarini profiles jadvalidan olish
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', authData.user.id)
+    .maybeSingle();
+
+  if (profile?.is_blocked) {
+    await supabase.auth.signOut();
+    throw new Error('Hisobingiz ma\'muriyat tomonidan bloklangan!');
   }
 
-  // PAROLNI TEKSHIRISH (Majburiy xavfsizlik talabi)
-  if (!kiritilganParol || !kiritilganParol.trim()) {
-    throw new Error('Iltimos, hisobingiz parolini kiriting!');
-  }
+  const userMeta = authData.user.user_metadata || {};
+  const loggedInUser: User = {
+    id: authData.user.id,
+    ism: profile?.ism || userMeta.ism || 'Foydalanuvchi',
+    telefon: profile?.telefon || userMeta.telefon || digits,
+    email: profile?.email || authData.user.email,
+    avatar_url: profile?.avatar_url || userMeta.avatar_url,
+    is_admin: Boolean(profile?.is_admin),
+    is_blocked: Boolean(profile?.is_blocked),
+    yaratilgan_sana: profile?.yaratilgan_sana || authData.user.created_at
+  };
 
-  const inputPass = kiritilganParol.trim();
-  let isPasswordCorrect = false;
-
-  if (dbParolHash && comparePassword(inputPass, dbParolHash)) {
-    isPasswordCorrect = true;
-  } else if (foundUser.parol && comparePassword(inputPass, foundUser.parol)) {
-    isPasswordCorrect = true;
-  }
-
-  // SHA-256 orqali ro'yxatdan o'tgan foydalanuvchilar uchun moslashuvchanlik
-  if (!isPasswordCorrect && dbParolHash && /^[a-f0-9]{64}$/i.test(dbParolHash) && typeof crypto !== 'undefined' && crypto.subtle) {
-    try {
-      const enc = new TextEncoder().encode(inputPass);
-      const buf = await crypto.subtle.digest('SHA-256', enc);
-      const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-      if (hex.toLowerCase() === dbParolHash.toLowerCase()) {
-        isPasswordCorrect = true;
-      }
-    } catch {}
-  }
-
-  if (!isPasswordCorrect) {
-    throw new Error('Kiritilgan parol noto\'g\'ri! Iltimos, qayta tekshiring yoki "Parolni unutdingizmi?" tugmasini bosing.');
-  }
-
-  setCurrentUser(foundUser);
-  return foundUser;
+  return loggedInUser;
 };
 
-// 3. Parolni tiklash (SMS tasdiqlashdan so'ng yangi parol o'rnatish)
+/**
+ * 3. Hozirgi kirgan foydalanuvchi sessiyasini olish (Supabase Auth yagona manba)
+ */
+export const getCurrentUser = async (): Promise<User | null> => {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+
+  try {
+    const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+    if (sessionErr || !session?.user) {
+      return null;
+    }
+
+    const authUser = session.user;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    if (profile?.is_blocked) {
+      await supabase.auth.signOut();
+      return null;
+    }
+
+    const userMeta = authUser.user_metadata || {};
+    return {
+      id: authUser.id,
+      ism: profile?.ism || userMeta.ism || 'Foydalanuvchi',
+      telefon: profile?.telefon || userMeta.telefon || '',
+      email: profile?.email || authUser.email,
+      avatar_url: profile?.avatar_url || userMeta.avatar_url,
+      is_admin: Boolean(profile?.is_admin),
+      is_blocked: Boolean(profile?.is_blocked),
+      yaratilgan_sana: profile?.yaratilgan_sana || authUser.created_at
+    };
+  } catch (err) {
+    console.warn('[authService] getCurrentUser error:', err);
+    return null;
+  }
+};
+
+/**
+ * 4. Tizimdan chiqish (Logout)
+ */
+export const logoutUser = async (): Promise<void> => {
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('[authService] signOut error:', e);
+    }
+  }
+};
+
+/**
+ * 5. Parolni yangilash (Parolni tiklash yoki o'zgartirish)
+ */
 export const resetUserPassword = async (
   telefon: string,
   yangiParol: string
-): Promise<User> => {
-  const cleanPhone = telefon.replace(/\s+/g, '').toLowerCase();
+): Promise<boolean> => {
+  const cleanPhone = sanitizePhone(telefon);
+  const cleanPassword = (yangiParol || '').trim();
+
+  if (cleanPassword.length < 8) {
+    throw new Error('Yangi parol kamida 8 ta belgidan iborat bo\'lishi shart!');
+  }
+
   const supabase = getSupabase();
-
-  const users = getStoredUsers();
-  const index = users.findIndex(
-    u => u.telefon.replace(/\s+/g, '').toLowerCase() === cleanPhone
-  );
-
-  if (index === -1) {
-    throw new Error('Ushbu telefon raqam bilan ro\'yxatdan o\'tgan hisob topilmadi!');
+  if (!supabase) {
+    throw new Error('Supabase xizmati bilan aloqa yo\'q.');
   }
 
-  if (supabase) {
-    try {
-      await supabase
-        .from('users')
-        .update({
-          parol_hash: hashPassword(yangiParol)
-        })
-        .eq('id', users[index].id);
-    } catch (e) {
-      console.warn('Supabase reset password error:', e);
+  // Agar foydalanuvchi tizimga kirgan bo'lsa:
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    const { error } = await supabase.auth.updateUser({
+      password: cleanPassword
+    });
+    if (error) throw new Error(`Parolni yangilab bo'lmadi: ${error.message}`);
+    return true;
+  }
+
+  // Agar tizimga kirmagan bo'lsa (Parolni unutdim oqimi):
+  // Server-side Edge Function orqali xavfsiz parolni yangilash
+  const { data, error } = await supabase.functions.invoke('admin-auth', {
+    body: {
+      action: 'reset_user_password',
+      phone: cleanPhone,
+      new_password: cleanPassword
     }
+  });
+
+  if (error || !data?.success) {
+    // Agar maxsus endpoint bo'lmasa, qayta login qilishni so'raymiz
+    throw new Error(data?.error || 'Parolni yangilashda xatolik yuz berdi. Iltimos, qaytadan urinib ko\'ring.');
   }
 
-  users[index].parol = yangiParol;
-  saveStoredUsers(users);
-  setCurrentUser(users[index]);
-  return users[index];
+  return true;
 };
 
-// 4. Foydalanuvchi o'z profilini yangilashi
+/**
+ * 6. Foydalanuvchi o'z profilini yangilashi
+ */
 export const updateUserProfile = async (
   userId: string,
   updatedData: Partial<User>
 ): Promise<User> => {
   const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase ulanishi mavjud emas');
 
-  if (supabase) {
-    try {
-      await supabase
-        .from('users')
-        .update({
-          ism: updatedData.ism,
-          telefon: updatedData.telefon,
-          email: updatedData.email,
-          avatar_url: updatedData.avatar_url,
-          parol_hash: updatedData.parol ? hashPassword(updatedData.parol) : undefined
-        })
-        .eq('id', userId);
-    } catch (e) {
-      console.warn('Supabase updateUserProfile error:', e);
-    }
+  const { data: { user: authUser } } = await supabase.auth.getUser();
+  if (!authUser || authUser.id !== userId) {
+    throw new Error('Ruxsat etilmagan: Faqat o\'z profilingizni yangilashingiz mumkin.');
   }
 
-  const users = getStoredUsers();
-  const index = users.findIndex(u => u.id === userId);
-  if (index !== -1) {
-    users[index] = { ...users[index], ...updatedData };
-    saveStoredUsers(users);
-    setCurrentUser(users[index]);
-    return users[index];
+  // Xavfsizlik: is_admin yoki is_blocked ni oddiy foydalanuvchi o'zgartira olmaydi
+  const profilePayload: any = {
+    updated_at: new Date().toISOString()
+  };
+
+  if (updatedData.ism) profilePayload.ism = updatedData.ism.trim();
+  if (updatedData.telefon) profilePayload.telefon = sanitizePhone(updatedData.telefon);
+  if (updatedData.email) profilePayload.email = updatedData.email.trim();
+  if (updatedData.avatar_url) profilePayload.avatar_url = updatedData.avatar_url;
+
+  const { data: updatedProfile, error } = await supabase
+    .from('profiles')
+    .update(profilePayload)
+    .eq('id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Profilni saqlashda xatolik: ${error.message}`);
   }
 
-  const curr = getCurrentUser();
-  if (curr) {
-    const updated = { ...curr, ...updatedData };
-    setCurrentUser(updated);
-    return updated;
-  }
-
-  throw new Error('Foydalanuvchi topilmadi');
+  return {
+    id: userId,
+    ism: updatedProfile.ism,
+    telefon: updatedProfile.telefon,
+    email: updatedProfile.email,
+    avatar_url: updatedProfile.avatar_url,
+    is_admin: Boolean(updatedProfile.is_admin),
+    is_blocked: Boolean(updatedProfile.is_blocked),
+    yaratilgan_sana: updatedProfile.yaratilgan_sana
+  };
 };
 
-export const logoutUser = () => {
-  setCurrentUser(null);
-};
-
-// 5. Bir martalik xavfsiz Token orqali avtomatik kirish (Telegram botdan qaytganda)
+/**
+ * 7. Bir martalik xavfsiz Token orqali avtomatik kirish
+ * Eski token_ hiylasi o'rniga Supabase Auth sessiyasi o'rnatiladi.
+ */
 export const authenticateWithToken = async (authToken: string): Promise<User | null> => {
   if (!authToken || !authToken.trim()) return null;
   const cleanToken = authToken.trim();
   const supabase = getSupabase();
+  if (!supabase) return null;
 
-  if (supabase) {
-    try {
-      // 1. otp_codes jadvalidan tokenni topish
-      const { data: tokenRecord, error: tokenError } = await supabase
-        .from('otp_codes')
-        .select('*')
-        .eq('phone', 'token_' + cleanToken)
-        .maybeSingle();
-
-      if (tokenError || !tokenRecord) {
-        return null;
+  try {
+    // Agar token Supabase magic link / OTP token hash bo'lsa
+    if (cleanToken.startsWith('pkce_') || cleanToken.length > 30) {
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: cleanToken,
+        type: 'magiclink'
+      });
+      if (!error && data?.user) {
+        return await getCurrentUser();
       }
-
-      // Muddatini tekshirish (15 daqiqa)
-      if (new Date(tokenRecord.expires_at).getTime() < Date.now()) {
-        try {
-          await supabase.from('otp_codes').delete().eq('phone', 'token_' + cleanToken);
-        } catch {}
-        return null;
-      }
-
-      const userIdentifier = tokenRecord.code; // userId yoki telefon
-
-      // 2. Foydalanuvchini users jadvalidan olish
-      let query = supabase.from('users').select('*');
-      if (userIdentifier.startsWith('user-')) {
-        query = query.eq('id', userIdentifier);
-      } else {
-        query = query.eq('telefon', userIdentifier);
-      }
-
-      const { data: userRow, error: userError } = await query.maybeSingle();
-      if (userError || !userRow) {
-        return null;
-      }
-
-      const authenticatedUser: User = {
-        id: userRow.id,
-        ism: userRow.ism,
-        telefon: userRow.telefon,
-        email: userRow.email || undefined,
-        avatar_url: userRow.avatar_url || undefined,
-        is_admin: Boolean(userRow.is_admin),
-        is_blocked: Boolean(userRow.is_blocked),
-        yaratilgan_sana: userRow.yaratilgan_sana || new Date().toISOString()
-      };
-
-      // 3. Tokenni bir martadan keyin darhol o'chirish (Xavfsizlik)
-      try {
-        await supabase.from('otp_codes').delete().eq('phone', 'token_' + cleanToken);
-      } catch {}
-
-      // 4. LocalStorage va tizim sessiyasiga saqlash
-      setCurrentUser(authenticatedUser);
-
-      // Mahalliy ro'yxatga ham qo'shib qo'yish (offline fallback uchun)
-      const localUsers = getStoredUsers();
-      if (!localUsers.some(u => u.id === authenticatedUser.id)) {
-        saveStoredUsers([...localUsers, authenticatedUser]);
-      }
-
-      return authenticatedUser;
-    } catch (e) {
-      console.warn('authenticateWithToken error:', e);
-      return null;
     }
+
+    // Server-side Edge function orqali tokenni tekshirish va sessiya olish
+    const { data, error } = await supabase.functions.invoke('verify-otp', {
+      body: { action: 'exchange_token', token: cleanToken }
+    });
+
+    if (!error && data?.session) {
+      await supabase.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token
+      });
+      return await getCurrentUser();
+    }
+  } catch (err) {
+    console.warn('[authService] authenticateWithToken error:', err);
   }
 
   return null;

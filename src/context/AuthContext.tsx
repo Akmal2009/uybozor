@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types';
 import { getCurrentUser, loginUser, logoutUser, registerUser, authenticateWithToken } from '../services/authService';
+import { getSupabase } from '../services/supabase';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (phoneOrEmail: string, password?: string) => Promise<User>;
   register: (name: string, phone: string, email?: string, password?: string) => Promise<User>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -20,33 +21,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+
     const initAuth = async () => {
-      // 1. URL parametridan 'auth_token' ni tekshirish (Telegram bot orqali avtomatik kirish)
+      // 1. URL parametridan 'auth_token' ni tekshirish
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const authToken = urlParams.get('auth_token');
         if (authToken && authToken.trim()) {
           const loggedUser = await authenticateWithToken(authToken.trim());
-          if (loggedUser) {
+          if (loggedUser && isMounted) {
             setUser(loggedUser);
-            // URL tozalash (?auth_token olib tashlanadi, sahifa qayta yuklanmaydi)
             const cleanUrl = window.location.pathname + (window.location.hash || '');
             window.history.replaceState({}, document.title, cleanUrl);
             return;
           }
         }
       } catch (e) {
-        console.warn('Auto-login from token error:', e);
+        console.warn('[AuthContext] Auto-login from token error:', e);
       }
 
-      // 2. Mavjud saqlangan sessiyani yuklash
-      const active = getCurrentUser();
-      if (active) {
+      // 2. Mavjud Supabase Auth sessiyasini yuklash
+      const active = await getCurrentUser();
+      if (active && isMounted) {
         setUser(active);
       }
     };
 
     initAuth();
+
+    // 3. Supabase Auth holat o'zgarishini tinglash (avtomatik refresh / logout)
+    const supabase = getSupabase();
+    let authListener: { subscription: { unsubscribe: () => void } } | null = null;
+
+    if (supabase) {
+      const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
+        if (event === 'SIGNED_OUT' || !session) {
+          setUser(null);
+        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+          const updatedUser = await getCurrentUser();
+          if (isMounted) setUser(updatedUser);
+        }
+      });
+      authListener = data;
+    }
+
+    return () => {
+      isMounted = false;
+      if (authListener?.subscription) {
+        authListener.subscription.unsubscribe();
+      }
+    };
   }, []);
 
   const login = async (phoneOrEmail: string, password?: string) => {
@@ -63,8 +89,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
-  const logout = () => {
-    logoutUser();
+  const logout = async () => {
+    await logoutUser();
     setUser(null);
   };
 

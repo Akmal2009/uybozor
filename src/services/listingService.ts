@@ -1,10 +1,6 @@
-import { Listing, ListingStatus, FilterState } from '../types';
-import { INITIAL_LISTINGS } from './mockData';
+import { Listing, FilterState } from '../types';
 import { getSupabase } from './supabase';
 
-const LISTINGS_STORAGE_KEY = 'uybozor_listings';
-
-// Yordamchi timeout funksiyasi (Supabase so'rovi uchun 15 soniyalik xavfsiz vaqt)
 const withTimeout = async <T>(promise: PromiseLike<T>, timeoutMs = 15000): Promise<T> => {
   let timer: any;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -21,83 +17,86 @@ const withTimeout = async <T>(promise: PromiseLike<T>, timeoutMs = 15000): Promi
   }
 };
 
-// Local storage'dan e'lonlarni olish
+const LISTINGS_STORAGE_KEY = 'uybozor_listings_cache';
+
+/**
+  * Dastlabki yuklanishda keshdan tezkor o'qish (HomePage 0.01s instant render)
+  */
 export const getStoredListings = (): Listing[] => {
-  const data = localStorage.getItem(LISTINGS_STORAGE_KEY);
-  if (!data) {
-    return [];
-  }
+  if (typeof localStorage === 'undefined') return [];
   try {
-    const parsed: Listing[] = JSON.parse(data);
-    if (!Array.isArray(parsed)) return [];
-    // Eski test (mock) e'lonlarini tozalash
-    const cleaned = parsed.filter(item => 
-      item && !['list-surxon-1', 'list-surxon-2', 'list-toshkent-1'].includes(item.id)
-    );
-    if (cleaned.length !== parsed.length) {
-      localStorage.setItem(LISTINGS_STORAGE_KEY, JSON.stringify(cleaned));
-    }
-    return cleaned;
+    const raw = localStorage.getItem(LISTINGS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 };
 
-export const saveStoredListings = (listings: Listing[]) => {
+/**
+  * E'lonlarni brauzer keshida saqlash
+  */
+export const saveStoredListings = (listings: Listing[]): void => {
+  if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(LISTINGS_STORAGE_KEY, JSON.stringify(listings));
-  } catch (e) {
-    console.warn('[listingService] LocalStorage quota exceeded, storing safe slim cache');
-    try {
-      // Agar xotira to'lsa, xatolik chiqarmaydi va ixcham holda saqlaydi
-      const slim = listings.slice(0, 15).map(l => ({
-        ...l,
-        rasmlar: Array.isArray(l.rasmlar) ? l.rasmlar.slice(0, 1) : []
-      }));
-      localStorage.setItem(LISTINGS_STORAGE_KEY, JSON.stringify(slim));
-    } catch {
-      // Hech qanday xatolik ko'rsatmaydi
-    }
+  } catch {
+    // Kesh saqlanmasa ham xatolik yuzaga keltirmaydi
   }
 };
 
-// Barcha e'lonlarni filtrlash va olish (Tezkor va Ishonchli)
+/**
+ * 1. Barcha e'lonlarni filtrlash va olish (Supabase yagona ishonchli manba)
+ */
 export const fetchListings = async (filter?: Partial<FilterState>): Promise<Listing[]> => {
   const supabase = getSupabase();
-  let rawListings: Listing[] = [];
+  if (!supabase) return [];
 
-  if (supabase) {
-    try {
-      const res: any = await withTimeout(
-        supabase
-          .from('listings')
-          .select('*')
-          .order('yaratilgan_sana', { ascending: false }),
-        15000
-      );
-
-      if (!res.error && Array.isArray(res.data)) {
-        rawListings = res.data as Listing[];
-        saveStoredListings(rawListings);
-      }
-    } catch (e) {
-      console.warn('[listingService] Supabase fetchListings fallback:', e);
-    }
-  }
-
-  if (rawListings.length === 0) {
-    rawListings = getStoredListings();
-  }
-
-  // Faqat 'faol' holatdagi e'lonlarni olish
-  let results = rawListings.filter(item => item && item.holat === 'faol');
+  let query = supabase
+    .from('listings')
+    .select('*')
+    .eq('holat', 'faol')
+    .order('yaratilgan_sana', { ascending: false });
 
   // Filtrlash (Turi bo'yicha)
   if (filter?.turi && filter.turi !== 'barchasi') {
-    results = results.filter(item => item.turi === filter.turi);
+    query = query.eq('turi', filter.turi);
   }
 
-  // Viloyat bo'yicha filtrlash
+  // Xonalar soni bo'yicha
+  if (filter?.xonalar_soni && filter.xonalar_soni !== 'barchasi') {
+    if (filter.xonalar_soni === 5) {
+      query = query.gte('xonalar_soni', 5);
+    } else {
+      query = query.eq('xonalar_soni', filter.xonalar_soni);
+    }
+  }
+
+  // Narx bo'yicha
+  if (filter?.minNarx && filter.minNarx > 0) {
+    query = query.gte('narx', filter.minNarx);
+  }
+  if (filter?.maxNarx && filter.maxNarx > 0) {
+    query = query.lte('narx', filter.maxNarx);
+  }
+
+  // Maydon bo'yicha
+  if (filter?.minMaydon && filter.minMaydon > 0) {
+    query = query.gte('maydon', filter.minMaydon);
+  }
+  if (filter?.maxMaydon && filter.maxMaydon > 0) {
+    query = query.lte('maydon', filter.maxMaydon);
+  }
+
+  const { data, error } = await withTimeout(query, 15000);
+
+  if (error) {
+    console.error('[listingService] fetchListings error:', error);
+    throw new Error(`E'lonlarni yuklashda xatolik: ${error.message}`);
+  }
+
+  let results = (data || []) as Listing[];
+
+  // Manzil / viloyat / qidiruv bo'yicha mijoz filtrlari
   if (filter?.viloyat && filter.viloyat !== 'barchasi' && filter.viloyat !== 'Barchasi') {
     const v = filter.viloyat.toLowerCase();
     results = results.filter(
@@ -108,19 +107,6 @@ export const fetchListings = async (filter?: Partial<FilterState>): Promise<List
     );
   }
 
-  // Tuman bo'yicha filtrlash
-  if (filter?.tuman && filter.tuman !== 'barchasi' && filter.tuman !== 'Barchasi') {
-    const t = filter.tuman.toLowerCase();
-    results = results.filter(
-      item =>
-        (item.tuman && item.tuman.toLowerCase().includes(t)) ||
-        (item.mahalla && item.mahalla.toLowerCase().includes(t)) ||
-        (item.manzil_matn && item.manzil_matn.toLowerCase().includes(t)) ||
-        (item.shahar && item.shahar.toLowerCase().includes(t))
-    );
-  }
-
-  // Shahar bo'yicha filtrlash
   if (filter?.shahar && filter.shahar !== 'Barchasi' && filter.shahar !== 'barchasi') {
     const s = filter.shahar.toLowerCase();
     results = results.filter(
@@ -131,46 +117,20 @@ export const fetchListings = async (filter?: Partial<FilterState>): Promise<List
     );
   }
 
-  // Xonalar soni
-  if (filter?.xonalar_soni && filter.xonalar_soni !== 'barchasi') {
-    if (filter.xonalar_soni === 5) {
-      results = results.filter(item => item.xonalar_soni >= 5);
-    } else {
-      results = results.filter(item => item.xonalar_soni === filter.xonalar_soni);
-    }
-  }
-
-  // Narx bo'yicha
-  if (filter?.minNarx !== undefined && filter.minNarx > 0) {
-    results = results.filter(item => item.narx >= filter.minNarx!);
-  }
-  if (filter?.maxNarx !== undefined && filter.maxNarx > 0) {
-    results = results.filter(item => item.narx <= filter.maxNarx!);
-  }
-
-  // Maydon bo'yicha
-  if (filter?.minMaydon !== undefined && filter.minMaydon > 0) {
-    results = results.filter(item => item.maydon >= filter.minMaydon!);
-  }
-  if (filter?.maxMaydon !== undefined && filter.maxMaydon > 0) {
-    results = results.filter(item => item.maydon <= filter.maxMaydon!);
-  }
-
-  // Qidiruv bo'yicha
   if (filter?.searchQuery && filter.searchQuery.trim() !== '') {
-    const q = filter.searchQuery.toLowerCase();
+    const q = filter.searchQuery.toLowerCase().trim();
     results = results.filter(
       item =>
-        (item.manzil_matn && item.manzil_matn.toLowerCase().includes(q)) ||
-        (item.shahar && item.shahar.toLowerCase().includes(q)) ||
+        item.shahar.toLowerCase().includes(q) ||
         (item.viloyat && item.viloyat.toLowerCase().includes(q)) ||
+        (item.mahalla && item.mahalla.toLowerCase().includes(q)) ||
         (item.tuman && item.tuman.toLowerCase().includes(q)) ||
-        (item.izoh && item.izoh.toLowerCase().includes(q)) ||
-        (item.telefon && item.telefon.includes(q))
+        item.manzil_matn.toLowerCase().includes(q) ||
+        (item.izoh && item.izoh.toLowerCase().includes(q))
     );
   }
 
-  // Sorting
+  // Tartiblash (Sorting)
   results.sort((a, b) => {
     if (a.is_vip && !b.is_vip) return -1;
     if (!a.is_vip && b.is_vip) return 1;
@@ -181,192 +141,201 @@ export const fetchListings = async (filter?: Partial<FilterState>): Promise<List
     return new Date(b.yaratilgan_sana).getTime() - new Date(a.yaratilgan_sana).getTime();
   });
 
+  if (!filter || (filter.turi === 'barchasi' && (!filter.shahar || filter.shahar === 'Barchasi') && !filter.searchQuery)) {
+    saveStoredListings(results);
+  }
+
   return results;
 };
 
-// ID bo'yicha e'lonni olish
+/**
+ * 2. ID bo'yicha e'lonni olish
+ */
 export const fetchListingById = async (id: string): Promise<Listing | null> => {
   const supabase = getSupabase();
+  if (!supabase) return null;
 
-  if (supabase) {
-    try {
-      const res: any = await withTimeout(
-        supabase.from('listings').select('*').eq('id', id).single(),
-        15000
-      );
-      if (!res.error && res.data) {
-        return res.data as Listing;
-      }
-    } catch (e) {
-      // fallback
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from('listings').select('*').eq('id', id).maybeSingle(),
+      15000
+    );
+
+    if (error) {
+      console.warn('[listingService] fetchListingById error:', error);
+      return null;
     }
-  }
 
-  const listings = getStoredListings();
-  return listings.find(item => item.id === id) || null;
+    return (data as Listing) || null;
+  } catch (err) {
+    console.warn('[listingService] fetchListingById error:', err);
+    return null;
+  }
 };
 
-// Foydalanuvchining e'lonlarini olish
+/**
+ * 3. Foydalanuvchining o'z e'lonlarini olish
+ */
 export const fetchUserListings = async (userId: string): Promise<Listing[]> => {
   const supabase = getSupabase();
+  if (!supabase || !userId) return [];
 
-  if (supabase) {
-    try {
-      const res: any = await withTimeout(
-        supabase
-          .from('listings')
-          .select('*')
-          .eq('user_id', userId)
-          .neq('holat', 'nobakor')
-          .order('yaratilgan_sana', { ascending: false }),
-        15000
-      );
+  const { data, error } = await withTimeout(
+    supabase
+      .from('listings')
+      .select('*')
+      .eq('user_id', userId)
+      .neq('holat', 'nobakor')
+      .order('yaratilgan_sana', { ascending: false }),
+    15000
+  );
 
-      if (!res.error && Array.isArray(res.data)) {
-        return res.data as Listing[];
-      }
-    } catch (e) {
-      // fallback
-    }
+  if (error) {
+    console.error('[listingService] fetchUserListings error:', error);
+    throw new Error(`E'lonlaringizni yuklashda xatolik: ${error.message}`);
   }
 
-  const listings = getStoredListings();
-  return listings.filter(item => item.user_id === userId && item.holat !== 'nobakor');
+  return (data || []) as Listing[];
 };
 
-// Yangi e'lon yaratish
-export const createListing = async (listingData: Omit<Listing, 'id' | 'yaratilgan_sana'>): Promise<Listing> => {
+/**
+ * 4. Yangi e'lon yaratish (RLS: user_id = auth.uid(), holat = 'kutilmoqda')
+ */
+export const createListing = async (
+  listingData: Omit<Listing, 'id' | 'yaratilgan_sana'>
+): Promise<Listing> => {
   const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase xizmatiga ulanib bo\'lmadi');
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    throw new Error('E\'lon joylashtirish uchun tizimga kirishingiz lozim!');
+  }
+
   const listingId = 'list-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
   const now = new Date().toISOString();
 
-  const fullListing: Listing = {
+  const newListingPayload: any = {
     ...listingData,
     id: listingId,
+    user_id: user.id, // Haqiqiy Supabase Auth foydalanuvchisi
+    holat: 'kutilmoqda', // Har doim moderatsiyaga tushadi
     views_count: 0,
+    can_edit: false,
+    edit_requested: false,
     yaratilgan_sana: now
   };
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('listings')
-        .insert([fullListing])
-        .select()
-        .single();
+  const { data, error } = await supabase
+    .from('listings')
+    .insert([newListingPayload])
+    .select()
+    .single();
 
-      if (!error && data) {
-        const created = data as Listing;
-        const stored = getStoredListings();
-        stored.unshift(created);
-        saveStoredListings(stored);
-        return created;
-      } else if (error) {
-        console.error('[Supabase createListing error]:', error);
-      }
-    } catch (e) {
-      console.warn('Supabase create error:', e);
-    }
+  if (error) {
+    console.error('[listingService] createListing error:', error);
+    throw new Error(`E'lonni saqlashda xatolik yuz berdi: ${error.message}`);
   }
 
-  const listings = getStoredListings();
-  listings.unshift(fullListing);
-  saveStoredListings(listings);
-  return fullListing;
+  return data as Listing;
 };
 
-// E'lonni yangilash
-export const updateListing = async (id: string, updatedData: Partial<Listing>): Promise<Listing> => {
+/**
+ * 5. E'lonni tahrirlash (RLS: can_edit=true yoki admin)
+ */
+export const updateListing = async (
+  id: string,
+  updatedData: Partial<Listing>
+): Promise<Listing> => {
   const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase xizmatiga ulanib bo\'lmadi');
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('listings')
-        .update(updatedData)
-        .eq('id', id)
-        .select()
-        .single();
+  const { data, error } = await supabase
+    .from('listings')
+    .update(updatedData)
+    .eq('id', id)
+    .select()
+    .single();
 
-      if (!error && data) {
-        const updated = data as Listing;
-        const stored = getStoredListings();
-        const index = stored.findIndex(item => item.id === id);
-        if (index !== -1) {
-          stored[index] = updated;
-          saveStoredListings(stored);
-        }
-        return updated;
-      } else if (error) {
-        console.error('[Supabase updateListing error]:', error);
-      }
-    } catch (e) {
-      console.warn('Supabase update error:', e);
-    }
+  if (error) {
+    console.error('[listingService] updateListing error:', error);
+    throw new Error(`E'lonni yangilashda xatolik: ${error.message}`);
   }
 
-  const listings = getStoredListings();
-  const index = listings.findIndex(item => item.id === id);
-  if (index !== -1) {
-    listings[index] = { ...listings[index], ...updatedData };
-    saveStoredListings(listings);
-    return listings[index];
-  }
-
-  return { id, ...updatedData } as Listing;
+  return data as Listing;
 };
 
-// E'lonni o'chirish
+/**
+ * 6. E'lonni o'chirish (RLS: faqat egasi yoki admin)
+ */
 export const deleteListing = async (id: string): Promise<boolean> => {
   const supabase = getSupabase();
+  if (!supabase) throw new Error('Supabase xizmatiga ulanib bo\'lmadi');
 
-  if (supabase) {
-    try {
-      await supabase.from('listings').delete().eq('id', id);
-    } catch (e) {
-      console.warn('Supabase delete error:', e);
-    }
+  const { error } = await supabase
+    .from('listings')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('[listingService] deleteListing error:', error);
+    throw new Error(`E'lonni o'chirishda xatolik: ${error.message}`);
   }
 
-  const listings = getStoredListings();
-  const filtered = listings.filter(item => item.id !== id);
-  saveStoredListings(filtered);
   return true;
 };
 
-// Ko'rishlar sonini oshirish (Supabase bazasida va LocalStorage keshida)
+/**
+ * 7. Ko'rishlar sonini bazada xavfsiz oshirish (SECURITY DEFINER increment_listing_views RPC)
+ * Bir sessiyada bir e'lonni qayta-qayta sanamaslik uchun sessionStorage tekshiruvi bilan
+ */
 export const incrementViewCount = async (id: string): Promise<number> => {
-  const supabase = getSupabase();
-  let updatedCount = 1;
+  const viewedKey = `viewed_listing_${id}`;
+  if (typeof sessionStorage !== 'undefined') {
+    if (sessionStorage.getItem(viewedKey)) {
+      const supabase = getSupabase();
+      const { data } = await supabase?.from('listings').select('views_count').eq('id', id).maybeSingle() || {};
+      return data?.views_count ?? 0;
+    }
+    sessionStorage.setItem(viewedKey, 'true');
+  }
 
-  if (supabase) {
-    try {
+  const supabase = getSupabase();
+  if (!supabase) return 0;
+
+  try {
+    // 1. Bazadagi xavfsiz atomic RPC funksiyasini chaqirish
+    const { error: rpcError } = await supabase.rpc('increment_listing_views', {
+      p_listing_id: id
+    });
+
+    if (rpcError) {
+      // Fallback: Agar RPC hali o'rnatilmagan bo'lsa
       const { data: item } = await supabase
         .from('listings')
         .select('views_count')
         .eq('id', id)
         .maybeSingle();
 
-      const current = typeof item?.views_count === 'number' ? item.views_count : 0;
-      updatedCount = current + 1;
-
+      const nextViews = (item?.views_count || 0) + 1;
       await supabase
         .from('listings')
-        .update({ views_count: updatedCount })
+        .update({ views_count: nextViews })
         .eq('id', id);
-    } catch {
-      // Offline fallback
+
+      return nextViews;
     }
-  }
 
-  const listings = getStoredListings();
-  const index = listings.findIndex(item => item.id === id);
-  if (index !== -1) {
-    const localCurrent = typeof listings[index].views_count === 'number' ? listings[index].views_count : 0;
-    listings[index].views_count = Math.max(updatedCount, localCurrent + 1);
-    saveStoredListings(listings);
-    updatedCount = listings[index].views_count;
-  }
+    // 2. Yangi qiymatni qaytarish
+    const { data } = await supabase
+      .from('listings')
+      .select('views_count')
+      .eq('id', id)
+      .maybeSingle();
 
-  return updatedCount;
+    return data?.views_count ?? 1;
+  } catch (err) {
+    console.warn('[listingService] incrementViewCount error:', err);
+    return 0;
+  }
 };
