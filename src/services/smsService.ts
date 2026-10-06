@@ -5,13 +5,12 @@ import { sendTelegramOtpCode, verifyTelegramOtpCode } from './telegramService';
 
 export interface SmsSendResult {
   success: boolean;
-  code: string;
   messageId?: string;
   error?: string;
 }
 
 /**
- * 1. 4 xonali tasdiqlash kodini Telegram bot orqali yuborish (Eski sendSmsOtpCode chaqiruvlari uchun)
+ * 1. 6 xonali tasdiqlash kodini Telegram bot orqali yuborish
  */
 export const sendSmsOtpCode = async (
   phone: string,
@@ -20,7 +19,6 @@ export const sendSmsOtpCode = async (
   const result = await sendTelegramOtpCode(phone, purpose);
   return {
     success: result.success,
-    code: result.code,
     error: result.error
   };
 };

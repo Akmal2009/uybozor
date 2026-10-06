@@ -1,24 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Vite environment o'zgaruvchilari
+// Build-time environment o'zgaruvchilari (Faqat VITE_ env orqali olinadi)
 const env = (import.meta as any).env || {};
-const SUPABASE_URL = env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY || '';
+export const supabaseUrl: string = env.VITE_SUPABASE_URL || '';
+export const supabaseAnonKey: string = env.VITE_SUPABASE_ANON_KEY || '';
 
-// Xatoliklarni tekshirish va konsolga aniq chiqarish
-if (!SUPABASE_URL && !localStorage.getItem('supabase_url')) {
-  console.error('XATO: VITE_SUPABASE_URL topilmadi. Vercel yoki .env faylni tekshiring.');
-}
-
-if (!SUPABASE_ANON_KEY && !localStorage.getItem('supabase_anon_key')) {
-  console.error('XATO: VITE_SUPABASE_ANON_KEY topilmadi. Vercel yoki .env faylni tekshiring.');
-}
-
-const localUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_url') : null;
-const localKey = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_anon_key') : null;
-
-export const supabaseUrl = localUrl || SUPABASE_URL || '';
-export const supabaseAnonKey = localKey || SUPABASE_ANON_KEY || '';
 export const isConfigured = Boolean(
   supabaseUrl &&
   supabaseAnonKey &&
@@ -26,23 +12,26 @@ export const isConfigured = Boolean(
   !supabaseUrl.includes('your-project')
 );
 
+if (!isConfigured) {
+  console.error('XATO: VITE_SUPABASE_URL yoki VITE_SUPABASE_ANON_KEY topilmadi. .env faylni tekshiring.');
+}
+
 let supabaseInstance: SupabaseClient | null = null;
 
 export const getSupabase = (): SupabaseClient | null => {
   if (!supabaseInstance && isConfigured) {
     try {
-      supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
-      console.log('[Supabase] Supabase mijoziga muvaffaqiyatli ulandi:', supabaseUrl);
+      supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        }
+      });
     } catch (e) {
-      console.error('[Supabase] Supabase initialization failed:', e);
+      console.error('[Supabase] Initsializatsiya xatosi:', e);
       supabaseInstance = null;
     }
   }
   return supabaseInstance;
-};
-
-export const saveSupabaseConfig = (url: string, key: string) => {
-  localStorage.setItem('supabase_url', url);
-  localStorage.setItem('supabase_anon_key', key);
-  window.location.reload();
 };

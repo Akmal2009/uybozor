@@ -20,17 +20,17 @@ Server muhitiga yoki `.env.local` fayliga quyidagi o'zgaruvchilar kiritilishi sh
 
 ```env
 # 1. Admin Bot
-VITE_TELEGRAM_ADMIN_BOT_TOKEN=8518990743:...
-VITE_ADMIN_CHAT_ID=8500341142
-VITE_TELEGRAM_ADMIN_BOT_USERNAME=Uybozorinbot
+TELEGRAM_ADMIN_BOT_TOKEN=your_admin_bot_token_here
+ADMIN_CHAT_ID=your_admin_chat_id_here
+TELEGRAM_ADMIN_BOT_USERNAME=Uybozorinbot
 
 # 2. Foydalanuvchi Boti (Kod va Ro'yxatdan o'tish)
-VITE_TELEGRAM_USER_BOT_TOKEN=8612336657:...
-VITE_TELEGRAM_USER_BOT_USERNAME=uybozorcodebot
+TELEGRAM_USER_BOT_TOKEN=your_user_bot_token_here
+TELEGRAM_USER_BOT_USERNAME=uybozorcodebot
 
-# 3. Supabase
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+# 3. Supabase (Server tomoni: Service Role Key bo'lishi lozim)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
 
 # 4. Sayt domeni
 SITE_URL=https://www.uybozor.store/

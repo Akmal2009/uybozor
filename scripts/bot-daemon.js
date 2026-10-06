@@ -43,12 +43,12 @@ function loadEnv() {
 }
 loadEnv();
 
-// Muhit o'zgaruvchilarini olish
-const USER_BOT_TOKEN = process.env.VITE_TELEGRAM_USER_BOT_TOKEN || process.env.TELEGRAM_USER_BOT_TOKEN || '';
-const ADMIN_BOT_TOKEN = process.env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || process.env.TELEGRAM_ADMIN_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN || '';
-const ADMIN_CHAT_ID = process.env.VITE_ADMIN_CHAT_ID || process.env.ADMIN_CHAT_ID || '';
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// Muhit o'zgaruvchilarini olish (Server tomoni: Service role va maxfiy tokenlar)
+const USER_BOT_TOKEN = process.env.TELEGRAM_USER_BOT_TOKEN || process.env.BOT_TOKEN_USER || process.env.VITE_TELEGRAM_USER_BOT_TOKEN || '';
+const ADMIN_BOT_TOKEN = process.env.TELEGRAM_ADMIN_BOT_TOKEN || process.env.BOT_TOKEN_ADMIN || process.env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN || '';
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || process.env.VITE_ADMIN_CHAT_ID || '';
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
 const SITE_URL = process.env.SITE_URL || 'https://www.uybozor.store/';
 const PORT = process.env.PORT || 10000;
 const HOST_URL = (process.env.RENDER_EXTERNAL_URL || process.env.HOST_URL || 'https://uybozor-bot.onrender.com').replace(/\/$/, '');

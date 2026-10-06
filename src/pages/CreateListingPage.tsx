@@ -6,7 +6,6 @@ import { compressImageFile } from '../services/imageUtils';
 import { MapPicker } from '../components/MapPicker';
 import { ListingType, Currency } from '../types';
 import {
-  TELEGRAM_CONFIG,
   sendTelegramNotification
 } from '../services/telegramService';
 import {
@@ -22,23 +21,6 @@ import {
   Clock,
   ShieldCheck
 } from 'lucide-react';
-
-// ============================================================================
-// ⚙️ ASOSIY SOZLAMALAR (CONFIG SECTION)
-// ============================================================================
-export const CONFIG = {
-  // 1. Telegram Bot Token (@BotFather orqali olingan)
-  TELEGRAM_BOT_TOKEN: TELEGRAM_CONFIG.BOT_TOKEN,
-
-  // 2. Admin Chat ID (@userinfobot orqali olingan admin ID)
-  ADMIN_CHAT_ID: TELEGRAM_CONFIG.ADMIN_CHAT_ID,
-
-  // 3. Supabase URL manzili
-  SUPABASE_URL: (import.meta as any).env?.VITE_SUPABASE_URL || '',
-
-  // 4. Supabase Anon ochiq kaliti
-  SUPABASE_ANON_KEY: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || ''
-};
 
 const CITIES = [
   'Toshkent',
