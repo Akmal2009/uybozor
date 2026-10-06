@@ -335,17 +335,25 @@ export const deleteListing = async (id: string): Promise<boolean> => {
 };
 
 // Ko'rishlar sonini oshirish (Supabase bazasida va LocalStorage keshida)
-export const incrementViewCount = async (id: string) => {
+export const incrementViewCount = async (id: string): Promise<number> => {
   const supabase = getSupabase();
+  let updatedCount = 1;
+
   if (supabase) {
     try {
-      const { error } = await supabase.rpc('increment_listing_views', { p_listing_id: id });
-      if (error) {
-        const { data: item } = await supabase.from('listings').select('views_count').eq('id', id).maybeSingle();
-        if (item) {
-          await supabase.from('listings').update({ views_count: (item.views_count || 0) + 1 }).eq('id', id);
-        }
-      }
+      const { data: item } = await supabase
+        .from('listings')
+        .select('views_count')
+        .eq('id', id)
+        .maybeSingle();
+
+      const current = typeof item?.views_count === 'number' ? item.views_count : 0;
+      updatedCount = current + 1;
+
+      await supabase
+        .from('listings')
+        .update({ views_count: updatedCount })
+        .eq('id', id);
     } catch {
       // Offline fallback
     }
@@ -354,7 +362,11 @@ export const incrementViewCount = async (id: string) => {
   const listings = getStoredListings();
   const index = listings.findIndex(item => item.id === id);
   if (index !== -1) {
-    listings[index].views_count = (listings[index].views_count || 0) + 1;
+    const localCurrent = typeof listings[index].views_count === 'number' ? listings[index].views_count : 0;
+    listings[index].views_count = Math.max(updatedCount, localCurrent + 1);
     saveStoredListings(listings);
+    updatedCount = listings[index].views_count;
   }
+
+  return updatedCount;
 };

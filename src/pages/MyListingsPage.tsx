@@ -210,7 +210,7 @@ export const MyListingsPage: React.FC = () => {
                 </div>
 
                 <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur px-2.5 py-1 rounded-lg text-[11px] text-white flex items-center gap-1 font-medium">
-                  <Eye className="w-3.5 h-3.5" /> {item.views_count || 1} ko'rish
+                  <Eye className="w-3.5 h-3.5" /> {item.views_count ?? 0} ko'rish
                 </div>
               </div>
 

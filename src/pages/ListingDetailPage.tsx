@@ -65,11 +65,20 @@ export const ListingDetailPage: React.FC = () => {
   useEffect(() => {
     if (id) {
       setLoading(true);
-      fetchListingById(id).then(data => {
+      fetchListingById(id).then(async data => {
         if (data) {
           setListing(data);
           setSelectedImage(data.rasmlar[0] || '');
-          incrementViewCount(data.id);
+
+          // Bir sessiyada bitta e'lonni aniq 1 marta hisoblash
+          const viewedKey = `viewed_listing_${data.id}`;
+          const alreadyViewed = sessionStorage.getItem(viewedKey);
+
+          if (!alreadyViewed) {
+            sessionStorage.setItem(viewedKey, 'true');
+            const newViews = await incrementViewCount(data.id);
+            setListing(prev => prev ? { ...prev, views_count: newViews } : prev);
+          }
 
           // O'xshash e'lonlarni olish
           fetchListings({ turi: data.turi, shahar: data.shahar }).then(list => {
@@ -305,7 +314,7 @@ export const ListingDetailPage: React.FC = () => {
 
             <span className="text-xs text-gray-400 flex items-center gap-1">
               <Eye className="w-3.5 h-3.5" />
-              {listing.views_count || 1} marta ko'rildi
+              {listing.views_count ?? 0} marta ko'rildi
             </span>
           </div>
 

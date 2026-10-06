@@ -76,7 +76,7 @@ export const ListingCard: React.FC<ListingCardProps> = ({ listing, priority = fa
         {/* Rasmlar soni & ko'rishlar */}
         <div className="absolute bottom-3 right-3 flex items-center gap-2 text-[11px] font-medium text-white bg-black/75 backdrop-blur px-2 py-0.5 rounded-md">
           <span className="flex items-center gap-1">
-            <Eye className="w-3 h-3" /> {listing.views_count || 1}
+            <Eye className="w-3 h-3" /> {listing.views_count ?? 0}
           </span>
           <span>•</span>
           <span>{listing.rasmlar.length || 1} rasm</span>
