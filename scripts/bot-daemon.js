@@ -10,11 +10,22 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import fs from 'fs';
 import dns from 'dns';
+import http from 'http';
 
 // Force IPv4 first to avoid IPv6 network timeouts with api.telegram.org
 if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder('ipv4first');
 }
+
+// Render.com Web Service Health Check Server (Port binding)
+const PORT = process.env.PORT || 10000;
+const healthServer = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ok', service: 'uybozor-bot-daemon', uptime: process.uptime() }));
+});
+healthServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`[Bot Daemon] 🌐 Render HTTP Health Server ${PORT}-portda ishga tushirildi...`);
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

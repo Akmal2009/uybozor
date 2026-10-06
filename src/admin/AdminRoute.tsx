@@ -25,7 +25,7 @@ export const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   // Backend tekshiruvi: sessiya haqiqatan bazada tasdiqlanganmi? (Konsol orqali soxta flag yasashdan himoya)
   useEffect(() => {
     const reqId = sessionStorage.getItem('admin_session_req_id');
-    if (is2FaApproved && reqId) {
+    if (is2FaApproved && reqId && !reqId.startsWith('direct_approved_')) {
       checkLoginRequestStatus(reqId).then(status => {
         if (status !== 'tasdiqlangan') {
           sessionStorage.removeItem('admin_2fa_approved');
@@ -37,31 +37,19 @@ export const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
     }
   }, [is2FaApproved]);
 
-  // 1. Agar 2FA tasdiqlangan bo'lsa -> To'g'ridan-to'g'ri Admin panelini ochish
+  // 1. Agar tasdiqlangan bo'lsa -> To'g'ridan-to'g'ri Admin panelini ochish
   if (is2FaApproved) {
     return <>{children}</>;
   }
 
-  // 2. Agar login/parol kiritilgan bo'lsa -> Telegram 2FA tasdiqlash sahifasi
-  if (pendingAdminInfo) {
-    return (
-      <AdminLoginConfirm
-        adminInfo={pendingAdminInfo}
-        onApproved={() => {
-          setIs2FaApproved(true);
-        }}
-        onCancel={() => {
-          setPendingAdminInfo(null);
-        }}
-      />
-    );
-  }
-
-  // 3. Boshlang'ich holat: Maxsus Login va Parol kiritish formasi
+  // 2. Boshlang'ich holat: Login va Parol kiritish formasi
   return (
     <AdminLogin
       onLoginSuccess={(info) => {
-        setPendingAdminInfo(info);
+        sessionStorage.setItem('admin_2fa_approved', 'true');
+        sessionStorage.setItem('admin_session_timestamp', Date.now().toString());
+        sessionStorage.setItem('admin_session_req_id', 'direct_approved_' + Date.now());
+        setIs2FaApproved(true);
       }}
     />
   );
