@@ -1,8 +1,9 @@
 // scripts/bot-daemon.js
-// Standalone Telegram Bot Daemon for Uy Bozor
+// Standalone Telegram Bot Daemon for Uy Bozor (24/7 Cloud & Local Support)
 // Handles:
 // 1. Admin Bot Moderation (2FA login approvals, listing approvals, VIP requests, edit requests)
 // 2. User Bot Services (Full Registration in Telegram, OTP delivery)
+// 3. Dual Mode: High-performance Telegram Webhook (for Render.com 24/7) + Long Polling fallback
 
 import { createClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
@@ -16,16 +17,6 @@ import http from 'http';
 if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder('ipv4first');
 }
-
-// Render.com Web Service Health Check Server (Port binding)
-const PORT = process.env.PORT || 10000;
-const healthServer = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', service: 'uybozor-bot-daemon', uptime: process.uptime() }));
-});
-healthServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Bot Daemon] 🌐 Render HTTP Health Server ${PORT}-portda ishga tushirildi...`);
-});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,41 +43,53 @@ function loadEnv() {
 }
 loadEnv();
 
-// Muhit o'zgaruvchilarini olish (Hech qanday hardcoded fallback kalitlar ishlatilmaydi!)
+// Muhit o'zgaruvchilarini olish
 const USER_BOT_TOKEN = process.env.VITE_TELEGRAM_USER_BOT_TOKEN || process.env.TELEGRAM_USER_BOT_TOKEN || '';
 const ADMIN_BOT_TOKEN = process.env.VITE_TELEGRAM_ADMIN_BOT_TOKEN || process.env.TELEGRAM_ADMIN_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN || '';
 const ADMIN_CHAT_ID = process.env.VITE_ADMIN_CHAT_ID || process.env.ADMIN_CHAT_ID || '';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SITE_URL = process.env.SITE_URL || 'https://www.uybozor.store/';
+const PORT = process.env.PORT || 10000;
+const HOST_URL = (process.env.RENDER_EXTERNAL_URL || process.env.HOST_URL || 'https://uybozor-bot.onrender.com').replace(/\/$/, '');
 
 console.log('====================================================');
 console.log('       UY BOZOR TELEGRAM BOT SERVER DAEMON          ');
 console.log('====================================================');
 
-// Xavfsizlik tekshiruvi: kalitlar yetishmasa daemon to'xtashi shart
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.error('[Bot Daemon] ❌ XATO: SUPABASE_URL yoki SUPABASE_KEY topilmadi!');
-  console.error('[Bot Daemon] Iltimos, .env.local faylida VITE_SUPABASE_URL va VITE_SUPABASE_ANON_KEY ni to\'ldiring.');
   process.exit(1);
 }
 
 if (!USER_BOT_TOKEN && !ADMIN_BOT_TOKEN) {
   console.error('[Bot Daemon] ❌ XATO: Hech qanday Telegram bot tokeni topilmadi!');
-  console.error('[Bot Daemon] Iltimos, VITE_TELEGRAM_USER_BOT_TOKEN yoki VITE_TELEGRAM_ADMIN_BOT_TOKEN ni sozlang.');
   process.exit(1);
 }
 
 console.log(`[Bot Daemon] Supabase URL: ${SUPABASE_URL}`);
-console.log(`[Bot Daemon] Admin Chat ID: ${ADMIN_CHAT_ID ? ADMIN_CHAT_ID : '(sozlanmagan)'}`);
+console.log(`[Bot Daemon] Admin Chat ID: ${ADMIN_CHAT_ID || '(sozlanmagan)'}`);
 console.log(`[Bot Daemon] User Bot Token: ${USER_BOT_TOKEN ? USER_BOT_TOKEN.slice(0, 10) + '...' : '(yo\'q)'}`);
 console.log(`[Bot Daemon] Admin Bot Token: ${ADMIN_BOT_TOKEN ? ADMIN_BOT_TOKEN.slice(0, 10) + '...' : '(yo\'q)'}`);
+console.log(`[Bot Daemon] Public Host URL: ${HOST_URL}`);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// In-memory registration session store (chatId -> { step, name, phone })
+// In-memory registration session store
 const sessions = new Map();
 
+// Bot monitoring statistikasi
+const stats = {
+  startTime: new Date().toISOString(),
+  mode: 'starting',
+  userBotUpdates: 0,
+  adminBotUpdates: 0,
+  lastUserUpdate: null,
+  lastAdminUpdate: null,
+  lastError: null
+};
+
+// Telegram API so'rov yuborish
 async function tgRequest(token, method, payload) {
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -98,6 +101,7 @@ async function tgRequest(token, method, payload) {
     return await res.json();
   } catch (err) {
     console.error(`[Bot Daemon] tgRequest ${method} error:`, err.message);
+    stats.lastError = `${method}: ${err.message}`;
     return null;
   }
 }
@@ -135,7 +139,7 @@ async function answerCallbackQuery(token, callbackQueryId, text, showAlert = fal
 async function generateAuthLink(userId, phone) {
   try {
     const authToken = 'at_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 daqiqa amal qiladi
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 daqiqa
 
     await supabase.from('otp_codes').upsert({
       phone: 'token_' + authToken,
@@ -162,7 +166,7 @@ async function handleAdminCallbackQuery(token, cb) {
 
   console.log(`[Admin Bot] 🔘 Callback query from ${senderId}: ${cbData}`);
 
-  // Tugmalarni faqat va faqat haqiqiy ADMIN bosa oladi!
+  // Faqat haqiqiy ADMIN ruxsat bera oladi
   if (ADMIN_CHAT_ID && senderId !== ADMIN_CHAT_ID) {
     await answerCallbackQuery(token, cb.id, '⛔ Ruxsat berilmadi! Siz administrator emassiz.', true);
     return;
@@ -254,7 +258,6 @@ async function handleAdminUpdate(token, update) {
       return;
     }
 
-    // Har qanday boshqa xabarga javob
     await sendMessage(
       token,
       chatId,
@@ -278,7 +281,6 @@ async function handleUserUpdate(token, update) {
     const chatId = cb.message?.chat?.id?.toString() || cb.from?.id?.toString();
     const cbData = cb.data || '';
 
-    // Agar admin callback query bo'lsa
     if (
       cbData.startsWith('approve_') ||
       cbData.startsWith('reject_') ||
@@ -343,7 +345,6 @@ async function handleUserUpdate(token, update) {
       const payloadRaw = parts.length > 1 ? parts[1].trim() : '';
       const payloadPhone = payloadRaw.replace(/[^\d]/g, '');
 
-      // Agar saytdan to'g'ridan-to'g'ri ro'yxatdan o'tish linki orqali kelgan bo'lsa:
       if (payloadRaw === 'register') {
         sessions.set(chatId, { step: 'name' });
         try {
@@ -465,7 +466,6 @@ async function handleUserUpdate(token, update) {
           return;
         }
 
-        // Avval ro'yxatdan o'tganmi?
         try {
           const { data: existingUser } = await supabase
             .from('users')
@@ -610,35 +610,146 @@ async function handleUserUpdate(token, update) {
 }
 
 // ============================================================================
-// 3. POLLING BO'TQUVCHI DASTUR (ADMIN & USER BOTS)
+// 3. HTTP SERVER & TELEGRAM WEBHOOK HANDLERS (24/7 Render.com)
+// ============================================================================
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+      if (data.length > 2 * 1024 * 1024) {
+        req.destroy();
+        resolve(null);
+      }
+    });
+    req.on('end', () => {
+      try {
+        resolve(data ? JSON.parse(data) : null);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
+// Webhooklarni Telegramga ulash yordamchisi
+async function registerWebhooks() {
+  const results = {};
+  if (USER_BOT_TOKEN) {
+    const userUrl = `${HOST_URL}/webhook/user`;
+    results.userBot = await tgRequest(USER_BOT_TOKEN, 'setWebhook', {
+      url: userUrl,
+      drop_pending_updates: false,
+      allowed_updates: ['message', 'callback_query']
+    });
+    console.log(`[Bot Daemon] 📱 User Bot Webhook -> ${userUrl}:`, results.userBot?.ok ? '✅ Ulangan' : results.userBot);
+  }
+
+  if (ADMIN_BOT_TOKEN) {
+    const adminUrl = `${HOST_URL}/webhook/admin`;
+    results.adminBot = await tgRequest(ADMIN_BOT_TOKEN, 'setWebhook', {
+      url: adminUrl,
+      drop_pending_updates: false,
+      allowed_updates: ['message', 'callback_query']
+    });
+    console.log(`[Bot Daemon] 👑 Admin Bot Webhook -> ${adminUrl}:`, results.adminBot?.ok ? '✅ Ulangan' : results.adminBot);
+  }
+
+  return results;
+}
+
+const healthServer = http.createServer(async (req, res) => {
+  const urlPath = req.url.split('?')[0];
+
+  // 1. Foydalanuvchi Boti Webhook (Telegram POST)
+  if (req.method === 'POST' && (urlPath === '/webhook/user' || urlPath === '/webhook/userbot')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+
+    const update = await readBody(req);
+    if (update && USER_BOT_TOKEN) {
+      stats.userBotUpdates++;
+      stats.lastUserUpdate = new Date().toISOString();
+      handleUserUpdate(USER_BOT_TOKEN, update).catch(err => {
+        console.error('[User Bot Webhook] Update error:', err.message);
+      });
+    }
+    return;
+  }
+
+  // 2. Admin Boti Webhook (Telegram POST)
+  if (req.method === 'POST' && (urlPath === '/webhook/admin' || urlPath === '/webhook/adminbot')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+
+    const update = await readBody(req);
+    if (update && ADMIN_BOT_TOKEN) {
+      stats.adminBotUpdates++;
+      stats.lastAdminUpdate = new Date().toISOString();
+      handleAdminUpdate(ADMIN_BOT_TOKEN, update).catch(err => {
+        console.error('[Admin Bot Webhook] Update error:', err.message);
+      });
+    }
+    return;
+  }
+
+  // 3. Webhooklarni qo'lda ulash (/setup-webhook)
+  if (urlPath === '/setup-webhook') {
+    const results = await registerWebhooks();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', results }, null, 2));
+    return;
+  }
+
+  // 4. Webhooklarni tozalash (/delete-webhook)
+  if (urlPath === '/delete-webhook') {
+    const results = {};
+    if (USER_BOT_TOKEN) results.userBot = await tgRequest(USER_BOT_TOKEN, 'deleteWebhook', { drop_pending_updates: false });
+    if (ADMIN_BOT_TOKEN) results.adminBot = await tgRequest(ADMIN_BOT_TOKEN, 'deleteWebhook', { drop_pending_updates: false });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', results }, null, 2));
+    return;
+  }
+
+  // 5. Standart Health Check va Monitor sahifasi
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    status: 'ok',
+    service: 'uybozor-bot-daemon',
+    uptime: Math.floor(process.uptime()),
+    host: HOST_URL,
+    mode: stats.mode,
+    bots: {
+      adminBot: { configured: !!ADMIN_BOT_TOKEN, username: process.env.VITE_TELEGRAM_ADMIN_BOT_USERNAME || 'Uybozorinbot' },
+      userBot: { configured: !!USER_BOT_TOKEN, username: process.env.VITE_TELEGRAM_USER_BOT_USERNAME || 'uybozorcodebot' }
+    },
+    stats: {
+      userBotUpdates: stats.userBotUpdates,
+      adminBotUpdates: stats.adminBotUpdates,
+      lastUserUpdate: stats.lastUserUpdate,
+      lastAdminUpdate: stats.lastAdminUpdate,
+      lastError: stats.lastError
+    }
+  }, null, 2));
+});
+
+// ============================================================================
+// 4. POLLING XIZMATI (Faqat lokal yoki Webhook bo'lmagan holat uchun)
 // ============================================================================
 async function startPollingBot(token, botLabel, updateHandler) {
   let offset = 0;
-
-  // Agar botda avval webhook o'rnatilgan bo'lsa, getUpdates 409 Conflict beradi.
-  // Pollingdan oldin webhookni avtomatik tozalaymiz:
-  try {
-    const delRes = await tgRequest(token, 'deleteWebhook', { drop_pending_updates: true });
-    if (delRes && delRes.ok) {
-      console.log(`[${botLabel}] 🔄 Webhook tozalandi va Polling rejimiga o'tildi.`);
-    }
-  } catch (err) {
-    console.warn(`[${botLabel}] deleteWebhook ogohlantirishi:`, err.message);
-  }
 
   async function poll() {
     try {
       const data = await tgRequest(token, 'getUpdates', {
         offset: offset + 1,
-        timeout: 10
+        timeout: 15
       });
 
       if (data && !data.ok) {
         console.warn(`[${botLabel}] Telegram API error:`, data.error_code, data.description);
-        if (data.error_code === 409) {
-          console.log(`[${botLabel}] ⚠️ 409 Conflict aniqlandi. Webhook to'liq o'chirilmoqda...`);
-          await tgRequest(token, 'deleteWebhook', { drop_pending_updates: true });
-        }
       }
 
       if (data && data.ok && data.result && data.result.length > 0) {
@@ -658,21 +769,33 @@ async function startPollingBot(token, botLabel, updateHandler) {
   poll();
 }
 
-// Botlarni ishga tushirish
-if (ADMIN_BOT_TOKEN && USER_BOT_TOKEN && ADMIN_BOT_TOKEN === USER_BOT_TOKEN) {
-  // Agar ikkala maqsad uchun yagona bot ishlatilsa
-  console.log('[Bot Daemon] 🤖 Yagona bot rejimida ishga tushirildi (Admin + User)...');
-  startPollingBot(ADMIN_BOT_TOKEN, 'Unified Bot', handleUserUpdate);
-} else {
-  // 1. Admin Boti (moderatsiya va /start xabarlari uchun)
-  if (ADMIN_BOT_TOKEN) {
-    console.log('[Bot Daemon] 👑 Admin Bot boshqaruvi ishga tushirildi...');
-    startPollingBot(ADMIN_BOT_TOKEN, 'Admin Bot', handleAdminUpdate);
-  }
+// ============================================================================
+// 5. SERVERNI ISHGA TUSHIRISH
+// ============================================================================
+healthServer.listen(PORT, '0.0.0.0', async () => {
+  console.log(`[Bot Daemon] 🌐 Render HTTP Server ${PORT}-portda ishga tushirildi...`);
+  console.log(`[Bot Daemon] 🔗 Public Host URL: ${HOST_URL}`);
 
-  // 2. Foydalanuvchi Boti (ro'yxatdan o'tish va kodlar uchun)
-  if (USER_BOT_TOKEN) {
-    console.log('[Bot Daemon] 📱 Foydalanuvchi Bot xizmati ishga tushirildi...');
-    startPollingBot(USER_BOT_TOKEN, 'User Bot', handleUserUpdate);
+  const isServer = process.env.RENDER || process.env.PORT || process.argv.includes('--webhook');
+  const isExplicitPolling = process.argv.includes('--poll');
+
+  if (isServer && !isExplicitPolling) {
+    stats.mode = 'webhook';
+    console.log('[Bot Daemon] ⚡ 24/7 Webhook rejimida ishga tushirilmoqda...');
+    await registerWebhooks();
+
+    // Render uyquga ketib qolmasligi uchun har 10 daqiqada doimiy chaqiriq (Keep-Alive)
+    setInterval(() => {
+      fetch(`${HOST_URL}/`).catch(() => {});
+    }, 10 * 60 * 1000);
+  } else {
+    stats.mode = 'polling';
+    console.log('[Bot Daemon] 🔄 Lokal Polling rejimida ishga tushirilmoqda...');
+    if (ADMIN_BOT_TOKEN && USER_BOT_TOKEN && ADMIN_BOT_TOKEN === USER_BOT_TOKEN) {
+      startPollingBot(ADMIN_BOT_TOKEN, 'Unified Bot', handleUserUpdate);
+    } else {
+      if (ADMIN_BOT_TOKEN) startPollingBot(ADMIN_BOT_TOKEN, 'Admin Bot', handleAdminUpdate);
+      if (USER_BOT_TOKEN) startPollingBot(USER_BOT_TOKEN, 'User Bot', handleUserUpdate);
+    }
   }
-}
+});
