@@ -1,8 +1,8 @@
 -- ==============================================================================
 -- UY BOZOR: YANGILANGAN VA TO'LIQ XAVFSIZ SUPABASE SXEMASI (RLS & Supabase Auth)
 -- ==============================================================================
--- Barcha RLS siyosatlari auth.uid() asosida qurilgan.
--- "USING (true)" va "OR true" ko'rinishidagi barcha zaifliklar butunlay olib tashlangan.
+-- Barcha RLS siyosatlari auth.uid() asosida xavfsiz qurilgan.
+-- Ochiq ruxsat beruvchi ("USING true") zaifliklar butunlay bartaraf etilgan.
 -- Maxfiy jadvallar (otp_codes, telegram_users, login_requests) faqat Service Role uchun.
 -- TO'LOV TIZIMI (payments) ga tegilmagan.
 -- ==============================================================================
@@ -278,6 +278,18 @@ TO authenticated
 USING (id = auth.uid() OR public.is_admin())
 WITH CHECK (id = auth.uid() OR public.is_admin());
 
+-- 3. INSERT: Ro'yxatdan o'tganda o'z profilini kiritish (yoki admin)
+CREATE POLICY "Profiles insert policy"
+ON public.profiles FOR INSERT
+TO authenticated
+WITH CHECK (id = auth.uid() OR public.is_admin());
+
+-- 4. DELETE: Faqat admin profillarni o'chira oladi
+CREATE POLICY "Profiles delete policy"
+ON public.profiles FOR DELETE
+TO authenticated
+USING (public.is_admin());
+
 -- ------------------------------------------------------------------------------
 -- D. LISTINGS RLS SIYOSATLARI
 -- ------------------------------------------------------------------------------
@@ -336,9 +348,13 @@ USING (
 -- otp_codes, telegram_users, bot_reg_sessions, login_requests jadvallariga
 -- anon yoki authenticated foydalanuvchilar to'g'ridan-to'g'ri so'rov yubora olmaydi.
 -- Ularga FAQAT Service Role (Edge Function'lar va bot-daemon) ruxsatga ega.
+REVOKE ALL ON TABLE public.otp_codes FROM anon, authenticated;
+REVOKE ALL ON TABLE public.telegram_users FROM anon, authenticated;
+REVOKE ALL ON TABLE public.bot_reg_sessions FROM anon, authenticated;
+REVOKE ALL ON TABLE public.login_requests FROM anon, authenticated;
 
 -- ------------------------------------------------------------------------------
--- F. PAYMENTS RLS SIYOSATLARI
+-- F. PAYMENTS RLS SIYOSATLARI (To'lov tizimiga tegilmagan)
 -- ------------------------------------------------------------------------------
 CREATE POLICY "Payments user select"
 ON public.payments FOR SELECT
@@ -347,3 +363,18 @@ USING (
     (auth.uid() IS NOT NULL AND user_id = auth.uid()::text)
     OR public.is_admin()
 );
+
+-- ------------------------------------------------------------------------------
+-- G. LEGACY USERS JADVALINI HIMOYA QILISH (Mavjud bo'lsa)
+-- ------------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users') THEN
+        ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+        DROP POLICY IF EXISTS "Users admin access" ON public.users;
+        CREATE POLICY "Users admin access" ON public.users
+        TO authenticated
+        USING (public.is_admin() OR (auth.uid() IS NOT NULL AND id = auth.uid()::text))
+        WITH CHECK (public.is_admin() OR (auth.uid() IS NOT NULL AND id = auth.uid()::text));
+    END IF;
+END $$;

@@ -82,7 +82,7 @@ export const checkLoginRequestStatus = async (
 
 /**
  * 2. Admin hisob ma'lumotlarini serverda xavfsiz tekshirish
- * DIQQAT: Hech qanday hardcoded parol yoki MASTER_ADMIN_HASH qolmadi!
+ * DIQQAT: Hech qanday hardcoded parol qolmadi!
  * Tekshiruv 100% server-side Edge Function / PostgreSQL RPC orqali o'tadi.
  */
 export const verifyAdminCredentials = async (

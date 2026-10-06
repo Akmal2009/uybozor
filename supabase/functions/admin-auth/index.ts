@@ -86,6 +86,58 @@ serve(async (req) => {
       );
     }
 
+    // 2.1. Foydalanuvchi parolini xavfsiz tiklash (OTP tasdiqlangandan so'ng)
+    if (action === 'reset_user_password') {
+      const cleanPhone = ((payload.phone as string) || '').replace(/[^\d]/g, '');
+      const newPassword = ((payload.new_password as string) || '').trim();
+
+      if (!cleanPhone || cleanPhone.length < 9) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Noto'g'ri telefon raqam" }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (!newPassword || newPassword.length < 8) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Parol kamida 8 ta belgidan iborat bo'lishi shart" }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const authEmail = `${cleanPhone}@phone.uybozor.uz`;
+      const { data: usersList } = await supabase.auth.admin.listUsers();
+      const targetUser = usersList?.users?.find(u => u.email === authEmail || u.phone === cleanPhone);
+
+      if (targetUser) {
+        const { error: updErr } = await supabase.auth.admin.updateUserById(targetUser.id, {
+          password: newPassword
+        });
+        if (updErr) {
+          return new Response(
+            JSON.stringify({ success: false, error: updErr.message }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      } else {
+        await supabase.auth.admin.createUser({
+          email: authEmail,
+          password: newPassword,
+          email_confirm: true,
+          user_metadata: { telefon: cleanPhone }
+        });
+      }
+
+      try {
+        const passHash = await bcrypt.hash(newPassword);
+        await supabase.from('users').update({ parol_hash: passHash }).eq('telefon', cleanPhone);
+      } catch {}
+
+      return new Response(
+        JSON.stringify({ success: true, message: "Parol muvaffaqiyatli yangilandi" }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // 3. Admin ma'lumotlarini tekshirish (Standart yoki action='verify')
     const cleanLogin = (login || '').trim().toLowerCase();
     const cleanPassword = (password || '').trim();
@@ -143,13 +195,24 @@ serve(async (req) => {
 
     // Agar eski users jadvalida qolgan bo'lsa
     if (!userRow) {
-      const { data } = await supabase
-        .from('users')
-        .select('*')
-        .eq('is_admin', true)
-        .or(`email.eq.${cleanLogin},telefon.eq.${cleanDigits || cleanLogin}`)
-        .maybeSingle();
-      userRow = data;
+      if (cleanDigits.length >= 9) {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .eq('is_admin', true)
+          .eq('telefon', cleanDigits)
+          .maybeSingle();
+        userRow = data;
+      }
+      if (!userRow) {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .eq('is_admin', true)
+          .eq('email', cleanLogin)
+          .maybeSingle();
+        userRow = data;
+      }
     }
 
     if (userRow) {

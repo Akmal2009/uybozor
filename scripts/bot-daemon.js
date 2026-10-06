@@ -525,6 +525,7 @@ async function handleUserUpdate(token, update) {
         const userId = 'user-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
 
         try {
+          // 1. users jadvaliga qo'shish (orqaga moslik uchun)
           const { error: insertError } = await supabase.from('users').insert([
             {
               id: userId,
@@ -539,8 +540,29 @@ async function handleUserUpdate(token, update) {
 
           if (insertError) {
             console.error('[User Bot] users insert error:', insertError);
-            await sendMessage(token, chatId, '⚠️ Xatolik yuz berdi. Iltimos, qaytadan urinib ko\'ring: /start register');
-            return;
+          }
+
+          // 2. Supabase Auth va profiles jadvaliga sinxronlash
+          const authEmail = `${session.phone}@phone.uybozor.uz`;
+          try {
+            const { data: authUser } = await supabase.auth.admin.createUser({
+              email: authEmail,
+              password: text,
+              email_confirm: true,
+              user_metadata: { ism: session.name, telefon: session.phone }
+            });
+            if (authUser?.user) {
+              await supabase.from('profiles').upsert({
+                id: authUser.user.id,
+                ism: session.name,
+                telefon: session.phone,
+                email: authEmail,
+                is_admin: false,
+                is_blocked: false
+              });
+            }
+          } catch (authErr) {
+            console.warn('[User Bot] Supabase Auth sync notice:', authErr.message);
           }
 
           await supabase.from('telegram_users').upsert({

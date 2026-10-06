@@ -353,6 +353,11 @@ export const authenticateWithToken = async (authToken: string): Promise<User | n
       body: { action: 'exchange_token', token: cleanToken }
     });
 
+    if (!error && data?.magic_link) {
+      window.location.href = data.magic_link;
+      return null;
+    }
+
     if (!error && data?.session) {
       await supabase.auth.setSession({
         access_token: data.session.access_token,

@@ -15,7 +15,59 @@ serve(async (req) => {
   }
 
   try {
-    const { phone, code } = await req.json();
+    const body = await req.json();
+    const { action, phone, code, token } = body;
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Server konfiguratsiya xatosi" }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // 0. Bir martalik xavfsiz avtologin tokenini almashtirish
+    if (action === 'exchange_token' && token) {
+      const cleanToken = String(token).trim();
+      const tokenKey = cleanToken.startsWith('at_') ? 'token_' + cleanToken : cleanToken;
+      const { data: tokData } = await supabase
+        .from('otp_codes')
+        .select('*')
+        .eq('phone', tokenKey)
+        .maybeSingle();
+
+      if (tokData && new Date(tokData.expires_at) > new Date()) {
+        await supabase.from('otp_codes').delete().eq('phone', tokenKey);
+        const userRef = tokData.code || '';
+        const cleanP = userRef.replace(/[^\d]/g, '');
+        const email = `${cleanP}@phone.uybozor.uz`;
+
+        const { data: linkData, error: linkErr } = await supabase.auth.admin.generateLink({
+          type: 'magiclink',
+          email
+        });
+
+        if (!linkErr && linkData?.properties?.action_link) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              magic_link: linkData.properties.action_link
+            }),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: false, error: "Token yaroqsiz yoki muddati o'tgan" }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const cleanPhone = (phone || '').replace(/[^\d]/g, '');
     const cleanCode = (code || '').trim();
 
@@ -32,18 +84,6 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Server konfiguratsiya xatosi" }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // 1. Bazadan OTP yozuvini olish
     const { data: record, error: dbError } = await supabase
