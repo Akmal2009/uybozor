@@ -174,7 +174,7 @@ export const loginUser = async (
       if (!jitErr && jitData?.success) {
         const retryRes = await supabase.auth.signInWithPassword({
           email: jitData.email || authEmail,
-          password: password
+          password: jitData.authPassword || password
         });
         if (!retryRes.error && retryRes.data.user) {
           authRes = retryRes;

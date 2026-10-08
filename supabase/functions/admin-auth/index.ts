@@ -3,7 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,7 +20,19 @@ serve(async (req) => {
     const { action, login, password, requestId, userId, userName, userPhone, status } = payload;
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_ANON_KEY') || '';
+    let supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    if (!supabaseServiceKey) {
+      const secretKeysRaw = Deno.env.get('SUPABASE_SECRET_KEYS');
+      if (secretKeysRaw) {
+        try {
+          const secretKeys = JSON.parse(secretKeysRaw);
+          supabaseServiceKey = secretKeys.service_role || secretKeys[0]?.secret || '';
+        } catch {}
+      }
+    }
+    if (!supabaseServiceKey) {
+      supabaseServiceKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
+    }
 
     if (!supabaseUrl || !supabaseServiceKey) {
       return new Response(
@@ -180,17 +192,18 @@ serve(async (req) => {
 
       // 3. Parol to'g'ri! Supabase Auth'ga sinxronlash
       const authEmail = `${p12}@phone.uybozor.uz`;
+      const safeAuthPass = inputPass.length < 6 ? inputPass.padEnd(6, '0') : inputPass;
       const { data: usersList } = await supabase.auth.admin.listUsers();
       const existingAuth = usersList?.users?.find(u => u.email === authEmail || u.phone === p12 || u.phone === p9);
 
       if (existingAuth) {
         await supabase.auth.admin.updateUserById(existingAuth.id, {
-          password: inputPass
+          password: safeAuthPass
         });
       } else {
         const { data: newAuth } = await supabase.auth.admin.createUser({
           email: authEmail,
-          password: inputPass,
+          password: safeAuthPass,
           email_confirm: true,
           user_metadata: { ism: userRow.ism, telefon: p12 }
         });
@@ -207,7 +220,7 @@ serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: true, email: authEmail }),
+        JSON.stringify({ success: true, email: authEmail, authPassword: safeAuthPass }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
