@@ -2,13 +2,21 @@ import { User } from '../types';
 import { getSupabase } from './supabase';
 
 /**
+ * Telefon raqamini xalqaro formatga normallashtirish (998...)
+ */
+export const normalizePhone = (phone: string): string => {
+  let digits = (phone || '').replace(/[^\d]/g, '');
+  if (digits.length === 9) {
+    digits = '998' + digits;
+  }
+  return digits;
+};
+
+/**
  * Telefon raqamini Supabase Auth uchun xavfsiz email aliasiga o'tkazish
- * Sababi: O'zbekistonda SMS provayderlariga (Twilio) qimmat to'lov qilmasdan,
- * Telegram bot orqali OTP tekshirilib, Supabase Auth ning barcha xavfsizlik
- * imkoniyatlari (JWT, sessiya, RLS auth.uid()) 100% to'liq ishlaydi.
  */
 export const phoneToAuthEmail = (phone: string): string => {
-  const digits = phone.replace(/[^\d]/g, '');
+  const digits = normalizePhone(phone);
   return `${digits}@phone.uybozor.uz`;
 };
 
@@ -16,7 +24,7 @@ export const phoneToAuthEmail = (phone: string): string => {
  * Telefon va email kiritishlarini Query Injection xavfidan himoyalash va normallashtirish
  */
 export const sanitizePhone = (phone: string): string => {
-  return phone.replace(/[^\d]/g, '');
+  return normalizePhone(phone);
 };
 
 export const isValidEmail = (email: string): boolean => {
@@ -130,19 +138,61 @@ export const loginUser = async (
     throw new Error('To\'g\'ri telefon raqam yoki email kiriting!');
   }
 
-  // Supabase Auth orqali autentifikatsiya
-  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+  // 1. Supabase Auth orqali autentifikatsiya
+  let authRes = await supabase.auth.signInWithPassword({
     email: authEmail,
     password: password
   });
 
-  if (authError) {
-    // Agar foydalanuvchi topilmasa yoki parol noto'g'ri bo'lsa
-    if (authError.message.includes('Invalid login credentials')) {
+  // 2. Agar xato bo'lsa, 9 xonali / 12 xonali muqobil emailni ham sinab ko'rish
+  if (authRes.error && digits.length >= 9) {
+    const rawDigits = rawInput.replace(/[^\d]/g, '');
+    const altDigits = rawDigits.length === 12 && rawDigits.startsWith('998') ? rawDigits.slice(3) : (rawDigits.length === 9 ? '998' + rawDigits : '');
+    if (altDigits) {
+      const altEmail = `${altDigits}@phone.uybozor.uz`;
+      const altRes = await supabase.auth.signInWithPassword({
+        email: altEmail,
+        password: password
+      });
+      if (!altRes.error && altRes.data.user) {
+        authRes = altRes;
+      }
+    }
+  }
+
+  // 3. Agar hali ham xato bo'lsa, server-side Edge Function (JIT Migration) orqali tekshirish
+  if (authRes.error) {
+    try {
+      const { data: jitData, error: jitErr } = await supabase.functions.invoke('admin-auth', {
+        body: {
+          action: 'user_fallback_login',
+          phone: digits,
+          password: password
+        }
+      });
+
+      if (!jitErr && jitData?.success) {
+        const retryRes = await supabase.auth.signInWithPassword({
+          email: jitData.email || authEmail,
+          password: password
+        });
+        if (!retryRes.error && retryRes.data.user) {
+          authRes = retryRes;
+        }
+      }
+    } catch (e) {
+      console.warn('[authService] JIT login check notice:', e);
+    }
+  }
+
+  if (authRes.error) {
+    if (authRes.error.message.includes('Invalid login credentials')) {
       throw new Error('Telefon raqam yoki parol noto\'g\'ri kiritildi!');
     }
-    throw new Error(authError.message);
+    throw new Error(authRes.error.message);
   }
+
+  const authData = authRes.data;
 
   if (!authData.user) {
     throw new Error('Foydalanuvchi ma\'lumotlarini yuklab bo\'lmadi.');

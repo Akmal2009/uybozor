@@ -138,6 +138,80 @@ serve(async (req) => {
       );
     }
 
+    // 2.2. Foydalanuvchi zaxira kirishi (Bot orqali ro'yxatdan o'tgan yoki eski parollarni JIT sinxronlash)
+    if (action === 'user_fallback_login') {
+      const cleanPhone = ((payload.phone as string) || '').replace(/[^\d]/g, '');
+      const inputPass = ((payload.password as string) || '').trim();
+
+      if (!cleanPhone || cleanPhone.length < 9 || !inputPass) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Ma'lumotlar to'liq emas" }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const p9 = cleanPhone.length === 12 && cleanPhone.startsWith('998') ? cleanPhone.slice(3) : cleanPhone;
+      const p12 = cleanPhone.length === 9 ? '998' + cleanPhone : cleanPhone;
+
+      // 1. users jadvalidan tekshirish
+      let userRow: any = null;
+      const { data: u1 } = await supabase.from('users').select('*').eq('telefon', p12).maybeSingle();
+      userRow = u1;
+      if (!userRow) {
+        const { data: u2 } = await supabase.from('users').select('*').eq('telefon', p9).maybeSingle();
+        userRow = u2;
+      }
+
+      if (!userRow || !userRow.parol_hash) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Foydalanuvchi topilmadi" }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // 2. Bcrypt parolni tekshirish
+      const isMatch = await bcrypt.compare(inputPass, userRow.parol_hash);
+      if (!isMatch) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Parol noto'g'ri" }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // 3. Parol to'g'ri! Supabase Auth'ga sinxronlash
+      const authEmail = `${p12}@phone.uybozor.uz`;
+      const { data: usersList } = await supabase.auth.admin.listUsers();
+      const existingAuth = usersList?.users?.find(u => u.email === authEmail || u.phone === p12 || u.phone === p9);
+
+      if (existingAuth) {
+        await supabase.auth.admin.updateUserById(existingAuth.id, {
+          password: inputPass
+        });
+      } else {
+        const { data: newAuth } = await supabase.auth.admin.createUser({
+          email: authEmail,
+          password: inputPass,
+          email_confirm: true,
+          user_metadata: { ism: userRow.ism, telefon: p12 }
+        });
+        if (newAuth?.user) {
+          await supabase.from('profiles').upsert({
+            id: newAuth.user.id,
+            ism: userRow.ism,
+            telefon: p12,
+            email: authEmail,
+            is_admin: Boolean(userRow.is_admin),
+            is_blocked: Boolean(userRow.is_blocked)
+          });
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, email: authEmail }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // 3. Admin ma'lumotlarini tekshirish (Standart yoki action='verify')
     const cleanLogin = (login || '').trim().toLowerCase();
     const cleanPassword = (password || '').trim();

@@ -460,7 +460,11 @@ async function handleUserUpdate(token, update) {
           rawPhone = text;
         }
 
-        const cleanPhone = rawPhone.replace(/[^\d]/g, '');
+        let cleanPhone = rawPhone.replace(/[^\d]/g, '');
+        if (cleanPhone.length === 9) {
+          cleanPhone = '998' + cleanPhone;
+        }
+
         if (!cleanPhone || cleanPhone.length < 9) {
           await sendMessage(token, chatId, '⚠️ Iltimos, to\'g\'ri telefon raqam yuboring (masalan: <code>+998901234567</code>):');
           return;
@@ -470,7 +474,7 @@ async function handleUserUpdate(token, update) {
           const { data: existingUser } = await supabase
             .from('users')
             .select('id')
-            .eq('telefon', cleanPhone)
+            .or(`telefon.eq.${cleanPhone},telefon.eq.${cleanPhone.replace(/^998/, '')}`)
             .maybeSingle();
 
           if (existingUser) {
@@ -509,7 +513,7 @@ async function handleUserUpdate(token, update) {
         await sendMessage(
           token,
           chatId,
-          `📱 Raqamingiz qabul qilindi: <b>+${cleanPhone}</b>\n\n🔑 <b>Ro'yxatdan o'tish (3/3)</b>\n\nEndi hisobingiz uchun <b>parol</b> o'rnating (kamida 4 ta belgi):`,
+          `📱 Raqamingiz qabul qilindi: <b>+${cleanPhone}</b>\n\n🔑 <b>Ro'yxatdan o'tish (3/3)</b>\n\nEndi hisobingiz uchun <b>parol</b> o'rnating (kamida 6 ta belgi tavsiya etiladi):`,
           { remove_keyboard: true }
         );
         return;
@@ -544,10 +548,11 @@ async function handleUserUpdate(token, update) {
 
           // 2. Supabase Auth va profiles jadvaliga sinxronlash
           const authEmail = `${session.phone}@phone.uybozor.uz`;
+          const authPassword = text.length < 6 ? text.padEnd(6, '0') : text;
           try {
             const { data: authUser } = await supabase.auth.admin.createUser({
               email: authEmail,
-              password: text,
+              password: authPassword,
               email_confirm: true,
               user_metadata: { ism: session.name, telefon: session.phone }
             });
